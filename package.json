@@ -1,0 +1,25 @@
+{
+  "name": "nlpearl-orchestrator",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "dev:backend": "pnpm --filter @nlpearl/database build && pnpm --filter @nlpearl/backend dev",
+    "dev:frontend": "pnpm --filter @nlpearl/frontend dev",
+    "build": "pnpm --filter @nlpearl/database build && pnpm --filter @nlpearl/shared-types build && pnpm --filter @nlpearl/backend build && pnpm --filter @nlpearl/frontend build",
+    "lint": "pnpm -r lint",
+    "test": "pnpm -r test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@10.5.2",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@nestjs/core",
+      "@prisma/client",
+      "@prisma/engines",
+      "esbuild",
+      "prisma"
+    ]
+  }
+}

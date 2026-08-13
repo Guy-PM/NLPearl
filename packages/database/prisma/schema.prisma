@@ -1,0 +1,77 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model FlowConfig {
+  id                     String   @id @default(uuid()) @db.Uuid
+  flowType               String   @unique @map("flow_type")
+  nlpearlOutboundId      String   @map("nlpearl_outbound_id")
+  preliminarySmsTemplate String   @map("preliminary_sms_template")
+  consentSmsTemplate     String   @map("consent_sms_template")
+  delayMinutes           Int      @map("delay_minutes")
+  enabled                Boolean  @default(true)
+  createdAt              DateTime @default(now()) @map("created_at")
+  updatedAt              DateTime @updatedAt @map("updated_at")
+
+  @@map("flow_configs")
+}
+
+enum FlowRunStatus {
+  Received
+  PreSmsSent
+  Scheduled
+  CallTriggered
+  ConsentGiven
+  CallEnded
+  Completed
+  Failed
+}
+
+model FlowRun {
+  id                    String        @id @default(uuid()) @db.Uuid
+  requestId             String        @unique @map("request_id")
+  flowType              String        @map("flow_type")
+  mpl                   String
+  phone                 String
+  name                  String
+  cfaUrl                String?       @map("cfa_url")
+  rawPayload            Json          @map("raw_payload")
+  status                FlowRunStatus @default(Received)
+  nlpearlCallRequestId  String?       @map("nlpearl_call_request_id")
+  nlpearlCallId         String?       @map("nlpearl_call_id")
+  callStatus            String?       @map("call_status")
+  conversationStatus    String?       @map("conversation_status")
+  duration              Int?
+  summary               String?
+  recordingUrl          String?       @map("recording_url")
+  collectedInfo         Json?         @map("collected_info")
+  errorMessage          String?       @map("error_message")
+  createdAt             DateTime      @default(now()) @map("created_at")
+  updatedAt             DateTime      @updatedAt @map("updated_at")
+
+  events FlowRunEvent[]
+
+  @@map("flow_runs")
+  @@index([flowType])
+  @@index([status])
+  @@index([mpl])
+}
+
+model FlowRunEvent {
+  id        String   @id @default(uuid()) @db.Uuid
+  flowRunId String   @map("flow_run_id") @db.Uuid
+  status    FlowRunStatus
+  detail    String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  flowRun FlowRun @relation(fields: [flowRunId], references: [id], onDelete: Cascade)
+
+  @@map("flow_run_events")
+  @@index([flowRunId])
+}

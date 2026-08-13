@@ -1,0 +1,153 @@
+#!/bin/bash
+# =============================================================================
+# NLPearl Orchestrator - Git Post-Receive Deployment Hook (STAGING)
+# =============================================================================
+# Triggered on `git push staging master`. Builds backend and frontend images
+# sequentially, runs Prisma migrations, restarts both containers on the host
+# network, polls health endpoints. Mirrors Titan's deploy/post-receive.staging.
+#
+# Installation:
+#   scp deploy/post-receive.staging \
+#       ubuntu@<vps>:/opt/git/nlpearl.git/hooks/post-receive
+#   ssh <vps> 'chmod +x /opt/git/nlpearl.git/hooks/post-receive'
+# =============================================================================
+
+set -e
+
+DEPLOY_DIR="/opt/app/nlpearl"
+GIT_DIR="/opt/git/nlpearl.git"
+CONFIG_FILE="/opt/app/nlpearl/config/.env.staging"
+
+BACKEND_IMAGE="nlpearl-backend:staging"
+FRONTEND_IMAGE="nlpearl-frontend:staging"
+BACKEND_CONTAINER="nlpearl-backend-staging"
+FRONTEND_CONTAINER="nlpearl-frontend-staging"
+
+LOG_FILE="${DEPLOY_DIR}/deploy.log"
+
+BACKEND_HEALTH_URL="http://localhost:3001/api/health"
+FRONTEND_HEALTH_URL="http://localhost:3010/"
+MAX_HEALTH_RETRIES=30
+HEALTH_RETRY_INTERVAL=2
+
+exec > >(tee -a "$LOG_FILE") 2>&1
+
+echo ""
+echo "========================================"
+echo "Deployment started: $(date)"
+echo "========================================"
+
+while read oldrev newrev refname; do
+    if [ "$refname" != "refs/heads/master" ] && [ "$refname" != "refs/heads/main" ]; then
+        echo "Ignoring push to ${refname} (only the default branch deploys)"
+        continue
+    fi
+
+    APP_VERSION=$(git --git-dir="$GIT_DIR" describe --tags "$newrev" 2>/dev/null || echo "dev")
+    echo "Deploying commit ${newrev:0:8} (version: ${APP_VERSION})"
+
+    echo "[1/7] Checking out code..."
+    git --work-tree="$DEPLOY_DIR" --git-dir="$GIT_DIR" checkout -f "$newrev"
+
+    echo "[2/7] Ensuring .env..."
+    if [ ! -f "$CONFIG_FILE" ]; then
+        echo "ERROR: ${CONFIG_FILE} not found. Create it from .env.example."
+        exit 1
+    fi
+    cp "$CONFIG_FILE" "${DEPLOY_DIR}/.env"
+
+    cd "$DEPLOY_DIR"
+
+    echo "[3/7] Tagging previous images for rollback..."
+    docker image inspect "$BACKEND_IMAGE"  >/dev/null 2>&1 && docker tag "$BACKEND_IMAGE"  nlpearl-backend:previous  || true
+    docker image inspect "$FRONTEND_IMAGE" >/dev/null 2>&1 && docker tag "$FRONTEND_IMAGE" nlpearl-frontend:previous || true
+
+    echo "[4/7] Building backend image..."
+    docker build --build-arg APP_VERSION="$APP_VERSION" \
+        -f apps/backend/Dockerfile -t "$BACKEND_IMAGE" .
+
+    echo "[4/7] Building frontend image..."
+    docker build \
+        --build-arg APP_VERSION="$APP_VERSION" \
+        --build-arg NEXT_PUBLIC_API_BASE_URL="/api" \
+        -f apps/frontend/Dockerfile -t "$FRONTEND_IMAGE" .
+
+    echo "[5/7] Running database migrations..."
+    docker run --rm \
+        --env-file "${DEPLOY_DIR}/.env" \
+        --network host \
+        --workdir /app/packages/database \
+        "$BACKEND_IMAGE" \
+        ../../node_modules/.bin/prisma migrate deploy
+
+    echo "[6/7] Restarting containers..."
+    for c in "$BACKEND_CONTAINER" "$FRONTEND_CONTAINER"; do
+        docker stop "$c" 2>/dev/null || true
+        docker rm   "$c" 2>/dev/null || true
+    done
+
+    # Binding 127.0.0.1 makes the containers reachable only via the host's
+    # loopback (which is what nginx uses), not from off-box.
+    docker run -d \
+        --name "$BACKEND_CONTAINER" \
+        --env-file "${DEPLOY_DIR}/.env" \
+        -e PORT=3001 \
+        -e HOST=127.0.0.1 \
+        --network host \
+        --restart unless-stopped \
+        "$BACKEND_IMAGE"
+
+    docker run -d \
+        --name "$FRONTEND_CONTAINER" \
+        --env-file "${DEPLOY_DIR}/.env" \
+        -e PORT=3010 \
+        -e HOSTNAME=127.0.0.1 \
+        --network host \
+        --restart unless-stopped \
+        "$FRONTEND_IMAGE"
+
+    echo "[7/7] Waiting for backend and frontend to become healthy..."
+    sleep 5
+
+    check_health() {
+        local url="$1" label="$2"
+        for i in $(seq 1 $MAX_HEALTH_RETRIES); do
+            if curl -sf "$url" >/dev/null 2>&1; then
+                echo "  ${label} OK ($(curl -s "$url" | head -c 200))"
+                return 0
+            fi
+            echo "  ${label} not ready... (${i}/${MAX_HEALTH_RETRIES})"
+            sleep $HEALTH_RETRY_INTERVAL
+        done
+        echo "  ${label} FAILED after ${MAX_HEALTH_RETRIES} attempts"
+        echo ""
+        echo "Container logs (last 30 lines each):"
+        docker logs "$BACKEND_CONTAINER"  --tail 30 || true
+        docker logs "$FRONTEND_CONTAINER" --tail 30 || true
+        echo ""
+        echo "Manual rollback:"
+        echo "  docker tag nlpearl-backend:previous  nlpearl-backend:staging"
+        echo "  docker tag nlpearl-frontend:previous nlpearl-frontend:staging"
+        echo "  docker restart ${BACKEND_CONTAINER} ${FRONTEND_CONTAINER}"
+        exit 1
+    }
+
+    check_health "$BACKEND_HEALTH_URL"  "backend"
+    check_health "$FRONTEND_HEALTH_URL" "frontend"
+
+    echo "Pruning old images..."
+    for repo in nlpearl-backend nlpearl-frontend; do
+        docker images "$repo" --format "{{.ID}} {{.Tag}}" \
+            | grep -v -E "staging|previous" \
+            | tail -n +4 \
+            | awk '{print $1}' \
+            | xargs -r docker rmi 2>/dev/null || true
+    done
+
+    echo ""
+    echo "========================================"
+    echo "Deployment SUCCESS: $(date)"
+    echo "Commit: ${newrev:0:8}"
+    echo "Version: ${APP_VERSION}"
+    echo "========================================"
+done
