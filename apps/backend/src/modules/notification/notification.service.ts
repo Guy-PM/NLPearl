@@ -1,15 +1,19 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable, InternalServerErrorException, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import axios from "axios";
 
+interface NotificationGatewayResponse {
+  email_success?: boolean;
+  sms_success?: boolean;
+  uuid: string;
+}
+
 /**
- * Client for PayMe's Notification Gateway (the same n8n-fronted webhook
- * used elsewhere at PayMe for outbound email/SMS — see the
- * migrate-mailgun skill for the `send_email` shape this mirrors).
- *
- * The exact SMS payload fields below (`phone`, `text_content`) are our
- * best guess from the confirmed `send_email` shape and need confirming
- * with whoever owns the gateway before relying on this in production.
+ * Client for PayMe's Notification Gateway — a single n8n-fronted webhook
+ * that dispatches to Mailgun/InforuMobile and logs to NocoDB. See the
+ * gateway's own API docs: auth is `X-API-Key`, the SMS body goes in
+ * `sms_content` (not `text_content` — that field is email-only, though
+ * the gateway falls back to it if `sms_content` is blank).
  */
 @Injectable()
 export class NotificationService {
@@ -17,16 +21,16 @@ export class NotificationService {
 
   constructor(private readonly config: ConfigService) {}
 
-  async sendSms(phone: string, text: string): Promise<void> {
+  async sendSms(phone: string, text: string): Promise<string> {
     const url = this.config.getOrThrow<string>("NOTIFICATION_GATEWAY_URL");
     const apiKey = this.config.getOrThrow<string>("NOTIFICATION_GATEWAY_API_KEY");
 
-    await axios.post(
+    const { data } = await axios.post<NotificationGatewayResponse>(
       url,
       {
         actions: ["send_sms"],
         phone,
-        text_content: text,
+        sms_content: text,
       },
       {
         headers: {
@@ -37,6 +41,13 @@ export class NotificationService {
       },
     );
 
-    this.logger.log(`SMS queued via Notification Gateway for ${phone}`);
+    if (!data.sms_success) {
+      throw new InternalServerErrorException(
+        `Notification Gateway reported sms_success=false (uuid=${data.uuid})`,
+      );
+    }
+
+    this.logger.log(`SMS sent via Notification Gateway for ${phone} (uuid=${data.uuid})`);
+    return data.uuid;
   }
 }
