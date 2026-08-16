@@ -11,6 +11,8 @@ export interface FlowRun {
   status: FlowRunStatus;
   errorMessage: string | null;
   attemptCount: number;
+  ctaCompleted: boolean;
+  ctaCompletedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }

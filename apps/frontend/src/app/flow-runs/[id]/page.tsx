@@ -40,7 +40,10 @@ export default function FlowRunDetailPage() {
   return (
     <div>
       <h1>{flowRun.name}</h1>
-      <p className="badge">{flowRun.status}</p>
+      <p className="badge">{flowRun.status}</p>{" "}
+      <span className={`badge ${flowRun.ctaCompleted ? "Completed" : ""}`}>
+        {flowRun.ctaCompleted ? "CTA completed" : "CTA not completed"}
+      </span>
 
       <div className="card">
         <h3>Details</h3>
@@ -48,6 +51,9 @@ export default function FlowRunDetailPage() {
         <p>Phone: {flowRun.phone}</p>
         <p>MPL: {flowRun.mpl}</p>
         <p>Attempts so far: {flowRun.attemptCount}</p>
+        {flowRun.ctaCompletedAt && (
+          <p>CTA completed at: {new Date(flowRun.ctaCompletedAt).toLocaleString()}</p>
+        )}
         {flowRun.cfaUrl && <p>CFA URL: {flowRun.cfaUrl}</p>}
         {flowRun.errorMessage && <p className="error">{flowRun.errorMessage}</p>}
         <div className="actions">

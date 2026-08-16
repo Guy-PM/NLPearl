@@ -344,4 +344,31 @@ describe("Flow pipeline (e2e, stubbed)", () => {
     expect(notificationService.sendSms.mock.calls.length).toBe(sendCountBefore + 1);
     expect(notificationService.sendSms).toHaveBeenLastCalledWith("+15550005", "Hi Eli, expect a call soon.");
   });
+
+  it("marks CTA completed via the N8N webhook, correlating by phone+flow", async () => {
+    const ingestRes = await request(app.getHttpServer())
+      .post("/api/webhooks/n8n/flow-trigger")
+      .set("x-api-key", "n8n-secret")
+      .send({ flowType: "kyc_reminder", name: "Fay", phone: "+15550006", mpl: "mpl-6" })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post("/api/webhooks/n8n/cta-complete")
+      .set("x-api-key", "n8n-secret")
+      .send({ phone: "+15550006", flow: "kyc_reminder", cta_complete: true })
+      .expect(200);
+
+    const detail = await request(app.getHttpServer())
+      .get(`/api/flow-runs/${ingestRes.body.id}`)
+      .expect(200);
+    expect(detail.body.ctaCompleted).toBe(true);
+    expect(detail.body.ctaCompletedAt).not.toBeNull();
+  });
+
+  it("rejects the cta-complete webhook without the shared secret", async () => {
+    await request(app.getHttpServer())
+      .post("/api/webhooks/n8n/cta-complete")
+      .send({ phone: "+15550006", flow: "kyc_reminder", cta_complete: true })
+      .expect(401);
+  });
 });

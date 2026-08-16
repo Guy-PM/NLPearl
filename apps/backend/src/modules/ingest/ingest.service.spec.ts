@@ -32,8 +32,9 @@ describe("IngestService", () => {
     prisma = {
       flowRun: {
         findUnique: jest.fn().mockResolvedValue(null),
+        findFirst: jest.fn().mockResolvedValue(null),
         create: jest.fn().mockImplementation(({ data }) => ({ id: "run-1", ...data })),
-        update: jest.fn().mockImplementation(({ data }) => ({ id: "run-existing", ...data })),
+        update: jest.fn().mockImplementation(({ where, data }) => ({ id: where.id ?? "run-existing", ...data })),
       },
     };
     flowConfigService = { findByFlowType: jest.fn().mockResolvedValue(config) };
@@ -123,5 +124,48 @@ describe("IngestService", () => {
     });
 
     await expect(service.handleFlowTrigger(dto, {})).rejects.toThrow("gateway down");
+  });
+
+  describe("handleCtaComplete", () => {
+    it("marks the matching FlowRun (correlated by phone+flow) as CTA completed", async () => {
+      const matched = { id: "run-1", phone: "+15550001", flowType: "kyc_reminder", status: FlowRunStatus.Scheduled };
+      prisma.flowRun.findFirst.mockResolvedValue(matched);
+
+      await service.handleCtaComplete({ phone: "+15550001", flow: "kyc_reminder", cta_complete: true });
+
+      expect(prisma.flowRun.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { phone: "+15550001", flowType: "kyc_reminder" } }),
+      );
+      expect(prisma.flowRun.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "run-1" },
+          data: expect.objectContaining({
+            ctaCompleted: true,
+            ctaCompletedAt: expect.any(Date),
+          }),
+        }),
+      );
+    });
+
+    it("does nothing when no FlowRun matches the phone+flow", async () => {
+      prisma.flowRun.findFirst.mockResolvedValue(null);
+
+      await service.handleCtaComplete({ phone: "+19998887777", flow: "kyc_reminder", cta_complete: true });
+
+      expect(prisma.flowRun.update).not.toHaveBeenCalled();
+    });
+
+    it("clears ctaCompletedAt when cta_complete is false", async () => {
+      const matched = { id: "run-1", phone: "+15550001", flowType: "kyc_reminder", status: FlowRunStatus.Scheduled };
+      prisma.flowRun.findFirst.mockResolvedValue(matched);
+
+      await service.handleCtaComplete({ phone: "+15550001", flow: "kyc_reminder", cta_complete: false });
+
+      expect(prisma.flowRun.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ ctaCompleted: false, ctaCompletedAt: null }),
+        }),
+      );
+    });
   });
 });

@@ -1,6 +1,7 @@
-import { Body, Controller, Post, Req, UseGuards } from "@nestjs/common";
+import { Body, Controller, HttpCode, Post, Req, UseGuards } from "@nestjs/common";
 import { Request } from "express";
 import { createApiKeyGuard } from "../../common/guards/api-key.guard";
+import { CtaCompleteWebhookDto } from "./dto/cta-complete-webhook.dto";
 import { FlowTriggerDto } from "./dto/flow-trigger.dto";
 import { IngestService } from "./ingest.service";
 
@@ -15,5 +16,12 @@ export class IngestController {
     // kept verbatim on FlowRun.rawPayload so nothing sent by N8N is lost.
     const flowRun = await this.ingestService.handleFlowTrigger(dto, req.body);
     return { id: flowRun.id, status: flowRun.status };
+  }
+
+  @Post("cta-complete")
+  @HttpCode(200)
+  async ctaComplete(@Body() dto: CtaCompleteWebhookDto) {
+    await this.ingestService.handleCtaComplete(dto);
+    return { received: true };
   }
 }

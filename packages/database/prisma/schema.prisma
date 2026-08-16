@@ -73,6 +73,12 @@ model FlowRun {
   // Lifetime count of dispatch attempts (initial + auto-retries + manual
   // resends) — compared against FlowConfig.maxRetryAttempts.
   attemptCount  Int           @default(1) @map("attempt_count")
+  // Set via POST /webhooks/n8n/cta-complete once N8N confirms (by its own
+  // separate check) that the client actually completed the CTA action —
+  // independent of the call's own status, since a client can act on the
+  // link at any point (even from the preliminary SMS, before any call).
+  ctaCompleted    Boolean   @default(false) @map("cta_completed")
+  ctaCompletedAt  DateTime? @map("cta_completed_at")
   createdAt     DateTime      @default(now()) @map("created_at")
   updatedAt     DateTime      @updatedAt @map("updated_at")
 

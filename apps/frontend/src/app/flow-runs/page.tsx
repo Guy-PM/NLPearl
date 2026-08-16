@@ -93,6 +93,7 @@ export default function FlowRunsPage() {
                 <th>Phone</th>
                 <th>MPL</th>
                 <th>Status</th>
+                <th>CTA</th>
               </tr>
             </thead>
             <tbody>
@@ -108,11 +109,12 @@ export default function FlowRunsPage() {
                   <td>
                     <span className={`badge ${run.status}`}>{run.status}</span>
                   </td>
+                  <td>{run.ctaCompleted ? "✓" : "—"}</td>
                 </tr>
               ))}
               {data.items.length === 0 && (
                 <tr>
-                  <td colSpan={6}>No records match these filters.</td>
+                  <td colSpan={7}>No records match these filters.</td>
                 </tr>
               )}
             </tbody>

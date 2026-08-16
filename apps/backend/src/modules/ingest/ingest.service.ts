@@ -5,6 +5,7 @@ import { PrismaService } from "../../prisma/prisma.service";
 import { FlowConfigService } from "../flow-config/flow-config.service";
 import { MessageDispatchService } from "../message-dispatch/message-dispatch.service";
 import { RECORD_ENRICHMENT_PORT, RecordEnrichmentPort } from "../enrichment/enrichment.port";
+import { CtaCompleteWebhookDto } from "./dto/cta-complete-webhook.dto";
 import { FlowTriggerDto } from "./dto/flow-trigger.dto";
 
 @Injectable()
@@ -94,5 +95,33 @@ export class IngestService {
       throw new Error(dispatched.errorMessage ?? "Preliminary SMS failed");
     }
     return dispatched;
+  }
+
+  /**
+   * N8N tells us (via its own separate check) that a client completed the
+   * CTA. Correlated by (phone, flow) — a phone only appears once within a
+   * single flow, even though mpl+phone can repeat across different flows.
+   */
+  async handleCtaComplete(dto: CtaCompleteWebhookDto): Promise<void> {
+    const flowRun = await this.prisma.flowRun.findFirst({
+      where: { phone: dto.phone, flowType: dto.flow },
+      orderBy: { createdAt: "desc" },
+    });
+
+    if (!flowRun) {
+      this.logger.warn(`No FlowRun found for phone=${dto.phone} flow=${dto.flow} — cta-complete webhook ignored`);
+      return;
+    }
+
+    await this.prisma.flowRun.update({
+      where: { id: flowRun.id },
+      data: {
+        ctaCompleted: dto.cta_complete,
+        ctaCompletedAt: dto.cta_complete ? new Date() : null,
+        events: {
+          create: { status: flowRun.status, detail: `CTA completed=${dto.cta_complete} (via N8N)` },
+        },
+      },
+    });
   }
 }
