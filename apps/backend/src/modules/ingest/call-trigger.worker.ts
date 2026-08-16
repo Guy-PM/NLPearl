@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
 import { FlowRunStatus } from "@nlpearl/database";
 import { PrismaService } from "../../prisma/prisma.service";
 import { FlowConfigService } from "../flow-config/flow-config.service";
+import { MessageDispatchService } from "../message-dispatch/message-dispatch.service";
 import { NlpearlService } from "../nlpearl/nlpearl.service";
 import { SchedulerService } from "../scheduler/scheduler.service";
 import { FlowRunTransitionService } from "../flow-runs/flow-run-transition.service";
@@ -25,6 +26,7 @@ export class CallTriggerWorker implements OnModuleInit {
     private readonly nlpearlService: NlpearlService,
     private readonly scheduler: SchedulerService,
     private readonly transitions: FlowRunTransitionService,
+    private readonly dispatchService: MessageDispatchService,
   ) {}
 
   async onModuleInit() {
@@ -43,15 +45,10 @@ export class CallTriggerWorker implements OnModuleInit {
 
     // Every path that ends in an actual NLPearl call (initial dispatch,
     // cron-batched dispatch, auto-retry, manual resend) funnels through
-    // this one job before placing it — a single check here is enough to
-    // cover all of them.
-    if (flowRun.ctaCompleted) {
+    // this one job before placing it — sharing the same check MessageDispatchService
+    // uses before the SMS send is enough to cover all of them.
+    if (await this.dispatchService.skipIfCtaCompleted(flowRun)) {
       this.logger.log(`FlowRun ${flowRunId} already has CTA completed, skipping call trigger`);
-      await this.transitions.transition(
-        flowRun.id,
-        FlowRunStatus.Completed,
-        "CTA already completed — call skipped",
-      );
       return;
     }
 

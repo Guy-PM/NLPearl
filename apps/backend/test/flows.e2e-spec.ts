@@ -395,4 +395,55 @@ describe("Flow pipeline (e2e, stubbed)", () => {
       .expect(200);
     expect(detail.body.status).toBe("Completed");
   });
+
+  it("skips the SMS too when a new attempt reuses an (mpl, flowType) whose CTA is already completed", async () => {
+    const ingestRes = await request(app.getHttpServer())
+      .post("/api/webhooks/n8n/flow-trigger")
+      .set("x-api-key", "n8n-secret")
+      .send({ flowType: "kyc_reminder", name: "Hana", phone: "+15550008", mpl: "mpl-8" })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post("/api/webhooks/n8n/cta-complete")
+      .set("x-api-key", "n8n-secret")
+      .send({ phone: "+15550008", flow: "kyc_reminder", cta_complete: true })
+      .expect(200);
+
+    const sendCountBefore = notificationService.sendSms.mock.calls.length;
+
+    const secondAttempt = await request(app.getHttpServer())
+      .post("/api/webhooks/n8n/flow-trigger")
+      .set("x-api-key", "n8n-secret")
+      .send({ flowType: "kyc_reminder", name: "Hana", phone: "+15550008", mpl: "mpl-8", requestId: "attempt-2-hana" })
+      .expect(201);
+
+    expect(secondAttempt.body.id).toBe(ingestRes.body.id);
+    expect(secondAttempt.body.status).toBe("Completed");
+    expect(notificationService.sendSms.mock.calls.length).toBe(sendCountBefore);
+  });
+
+  it("skips the batched SMS for a record whose CTA completes while it waits for the cron", async () => {
+    const ingestRes = await request(app.getHttpServer())
+      .post("/api/webhooks/n8n/flow-trigger")
+      .set("x-api-key", "n8n-secret")
+      .send({ flowType: "batched_flow", name: "Ivy", phone: "+15550009", mpl: "mpl-9" })
+      .expect(201);
+    expect(ingestRes.body.status).toBe("Received");
+
+    await request(app.getHttpServer())
+      .post("/api/webhooks/n8n/cta-complete")
+      .set("x-api-key", "n8n-secret")
+      .send({ phone: "+15550009", flow: "batched_flow", cta_complete: true })
+      .expect(200);
+
+    const sendCountBefore = notificationService.sendSms.mock.calls.length;
+    await registeredJobHandlers["dispatch-pending:batched_flow"]({ flowType: "batched_flow" });
+
+    expect(notificationService.sendSms.mock.calls.length).toBe(sendCountBefore);
+
+    const detail = await request(app.getHttpServer())
+      .get(`/api/flow-runs/${ingestRes.body.id}`)
+      .expect(200);
+    expect(detail.body.status).toBe("Completed");
+  });
 });

@@ -18,6 +18,7 @@ describe("CallTriggerWorker", () => {
   let nlpearlService: any;
   let scheduler: any;
   let transitions: any;
+  let dispatchService: any;
   let worker: CallTriggerWorker;
   let registeredHandler: (data: { flowRunId: string }) => Promise<void>;
 
@@ -37,8 +38,9 @@ describe("CallTriggerWorker", () => {
       }),
     };
     transitions = { fail: jest.fn().mockResolvedValue({}), transition: jest.fn().mockResolvedValue({}) };
+    dispatchService = { skipIfCtaCompleted: jest.fn().mockResolvedValue(null) };
 
-    worker = new CallTriggerWorker(prisma, flowConfigService, nlpearlService, scheduler, transitions);
+    worker = new CallTriggerWorker(prisma, flowConfigService, nlpearlService, scheduler, transitions, dispatchService);
     await worker.onModuleInit();
   });
 
@@ -80,16 +82,15 @@ describe("CallTriggerWorker", () => {
     expect(prisma.flowRun.update).not.toHaveBeenCalled();
   });
 
-  it("skips the call and marks Completed when the CTA was already completed", async () => {
-    prisma.flowRun.findUnique.mockResolvedValue({ ...flowRun, ctaCompleted: true });
+  it("skips the call when MessageDispatchService reports the CTA was already completed", async () => {
+    const ctaCompletedFlowRun = { ...flowRun, ctaCompleted: true, status: FlowRunStatus.Completed };
+    prisma.flowRun.findUnique.mockResolvedValue(ctaCompletedFlowRun);
+    dispatchService.skipIfCtaCompleted.mockResolvedValue(ctaCompletedFlowRun);
 
     await registeredHandler({ flowRunId: "run-1" });
 
+    expect(dispatchService.skipIfCtaCompleted).toHaveBeenCalledWith(ctaCompletedFlowRun);
     expect(nlpearlService.makeCall).not.toHaveBeenCalled();
-    expect(transitions.transition).toHaveBeenCalledWith(
-      "run-1",
-      FlowRunStatus.Completed,
-      expect.stringContaining("CTA"),
-    );
+    expect(prisma.flowRun.update).not.toHaveBeenCalled();
   });
 });

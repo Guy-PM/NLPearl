@@ -69,6 +69,27 @@ describe("MessageDispatchService", () => {
     });
   });
 
+  describe("skipIfCtaCompleted", () => {
+    it("returns null and does nothing when CTA isn't completed", async () => {
+      const result = await service.skipIfCtaCompleted({ ...flowRun, ctaCompleted: false } as any);
+
+      expect(result).toBeNull();
+      expect(prisma.flowRun.update).not.toHaveBeenCalled();
+    });
+
+    it("marks Completed and returns the updated record when CTA is completed", async () => {
+      const result = await service.skipIfCtaCompleted({ ...flowRun, ctaCompleted: true } as any);
+
+      expect(prisma.flowRun.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "run-1" },
+          data: expect.objectContaining({ status: FlowRunStatus.Completed }),
+        }),
+      );
+      expect(result?.status).toBe(FlowRunStatus.Completed);
+    });
+  });
+
   describe("scheduleRetry", () => {
     it("increments attemptCount, marks Scheduled, and enqueues a delayed retry job", async () => {
       await service.scheduleRetry(flowRun as any, config as any, "callStatus=7");

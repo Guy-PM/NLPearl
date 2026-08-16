@@ -43,6 +43,7 @@ describe("IngestService", () => {
         ...flowRun,
         status: FlowRunStatus.Scheduled,
       })),
+      skipIfCtaCompleted: jest.fn().mockResolvedValue(null),
     };
     enrichment = { enrich: jest.fn().mockImplementation((record) => Promise.resolve(record)) };
 
@@ -124,6 +125,17 @@ describe("IngestService", () => {
     });
 
     await expect(service.handleFlowTrigger(dto, {})).rejects.toThrow("gateway down");
+  });
+
+  it("skips dispatch entirely (no SMS) when the record's CTA is already completed", async () => {
+    const completed = { id: "run-1", status: FlowRunStatus.Completed };
+    dispatchService.skipIfCtaCompleted.mockResolvedValue(completed);
+
+    const result = await service.handleFlowTrigger(dto, {});
+
+    expect(dispatchService.skipIfCtaCompleted).toHaveBeenCalled();
+    expect(dispatchService.dispatchOne).not.toHaveBeenCalled();
+    expect(result).toBe(completed);
   });
 
   describe("handleCtaComplete", () => {

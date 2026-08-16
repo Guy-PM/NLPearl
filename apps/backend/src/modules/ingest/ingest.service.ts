@@ -84,6 +84,9 @@ export class IngestService {
           },
         });
 
+    const skipped = await this.dispatchService.skipIfCtaCompleted(flowRun);
+    if (skipped) return skipped;
+
     if (config.sendSchedule) {
       // Batched: leave it at Received — the flow's cron dispatch job will
       // send it at the next scheduled time.

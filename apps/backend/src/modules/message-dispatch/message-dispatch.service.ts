@@ -43,6 +43,18 @@ export class MessageDispatchService implements OnModuleInit {
     });
   }
 
+  /**
+   * If this record's CTA is already confirmed complete, nothing further
+   * (SMS or call) should go out — marks it Completed and returns it.
+   * Returns null if the caller should proceed normally. Deliberately NOT
+   * applied to the manual "Resend" action — that's an explicit human
+   * override. Public so IngestService and CallTriggerWorker can share it.
+   */
+  async skipIfCtaCompleted(flowRun: FlowRun): Promise<FlowRun | null> {
+    if (!flowRun.ctaCompleted) return null;
+    return this.transition(flowRun.id, FlowRunStatus.Completed, "CTA already completed — skipped");
+  }
+
   private fail(flowRunId: string, errorMessage: string) {
     return this.prisma.flowRun.update({
       where: { id: flowRunId },
@@ -71,6 +83,7 @@ export class MessageDispatchService implements OnModuleInit {
   private async handleRetry(flowRunId: string): Promise<void> {
     const flowRun = await this.prisma.flowRun.findUnique({ where: { id: flowRunId } });
     if (!flowRun) return;
+    if (await this.skipIfCtaCompleted(flowRun)) return;
     const config = await this.prisma.flowConfig.findUnique({ where: { flowType: flowRun.flowType } });
     if (!config || !config.enabled) return;
     await this.dispatchOne(flowRun, config);
@@ -147,6 +160,7 @@ export class MessageDispatchService implements OnModuleInit {
     });
     this.logger.log(`Dispatching ${pending.length} pending record(s) for flow "${flowType}"`);
     for (const flowRun of pending) {
+      if (await this.skipIfCtaCompleted(flowRun)) continue;
       await this.dispatchOne(flowRun, config);
     }
   }
