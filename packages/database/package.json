@@ -7,14 +7,15 @@
   "scripts": {
     "generate": "prisma generate",
     "build": "prisma generate && tsc -p tsconfig.json && node scripts/copy-generated.js",
-    "migrate:dev": "prisma migrate dev",
-    "migrate:deploy": "prisma migrate deploy",
-    "seed": "tsx src/seed.ts"
+    "migrate:dev": "dotenv -e ../../.env -- prisma migrate dev",
+    "migrate:deploy": "dotenv -e ../../.env -- prisma migrate deploy",
+    "seed": "dotenv -e ../../.env -- tsx src/seed.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.9.0"
   },
   "devDependencies": {
+    "dotenv-cli": "^7.4.2",
     "prisma": "^6.9.0",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0"
