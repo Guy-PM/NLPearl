@@ -1,15 +1,17 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { api, ApiError } from "@/lib/api";
 import { FlowRunDetail } from "@/lib/types";
 
 export default function FlowRunDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const router = useRouter();
   const [flowRun, setFlowRun] = useState<FlowRunDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [resending, setResending] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const load = () => {
     api
@@ -31,6 +33,19 @@ export default function FlowRunDetailPage() {
       setError(err instanceof ApiError ? err.message : "Failed to resend");
     } finally {
       setResending(false);
+    }
+  };
+
+  const remove = async () => {
+    if (!confirm("Delete this record? This cannot be undone.")) return;
+    setDeleting(true);
+    setError(null);
+    try {
+      await api.delete(`/flow-runs/${id}`);
+      router.push("/flow-runs");
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to delete");
+      setDeleting(false);
     }
   };
 
@@ -59,6 +74,9 @@ export default function FlowRunDetailPage() {
         <div className="actions">
           <button onClick={resend} disabled={resending}>
             {resending ? "Resending…" : "Resend"}
+          </button>
+          <button onClick={remove} disabled={deleting}>
+            {deleting ? "Deleting…" : "Delete"}
           </button>
         </div>
       </div>

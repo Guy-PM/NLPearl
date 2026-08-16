@@ -150,6 +150,13 @@ export function createFakePrisma() {
         }
         return updated;
       },
+      delete: async ({ where }: any) => {
+        const existing = flowRuns.get(where.id);
+        if (!existing) throw new Error(`FlowRun ${where.id} not found`);
+        flowRuns.delete(where.id);
+        for (const call of callsForFlowRun(where.id)) nlpearlCalls.delete(call.id);
+        return existing;
+      },
     },
     nlpearlCall: {
       findFirst: async ({ where, orderBy }: any) => {

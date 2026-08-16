@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Post, Query } from "@nestjs/common";
+import { Controller, Delete, Get, Param, Post, Query } from "@nestjs/common";
 import { FlowRunsService } from "./flow-runs.service";
 import { ListFlowRunsDto } from "./dto/list-flow-runs.dto";
 
@@ -19,5 +19,10 @@ export class FlowRunsController {
   @Post(":id/resend")
   resend(@Param("id") id: string) {
     return this.flowRunsService.resend(id);
+  }
+
+  @Delete(":id")
+  remove(@Param("id") id: string) {
+    return this.flowRunsService.remove(id);
   }
 }

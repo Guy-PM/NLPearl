@@ -67,4 +67,18 @@ export class FlowRunsService {
     const config = await this.flowConfigService.findByFlowType(flowRun.flowType);
     return this.dispatchService.resendNow(flowRun, config);
   }
+
+  /**
+   * Deletes a record. Its events and call history cascade-delete with it
+   * (onDelete: Cascade). Any already-queued delayed job (call trigger,
+   * retry) for this id just no-ops harmlessly when it fires and finds
+   * nothing — same as the existing "FlowRun not found" handling.
+   */
+  async remove(id: string) {
+    const flowRun = await this.prisma.flowRun.findUnique({ where: { id } });
+    if (!flowRun) {
+      throw new NotFoundException(`FlowRun "${id}" not found`);
+    }
+    await this.prisma.flowRun.delete({ where: { id } });
+  }
 }

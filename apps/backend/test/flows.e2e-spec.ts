@@ -446,4 +446,20 @@ describe("Flow pipeline (e2e, stubbed)", () => {
       .expect(200);
     expect(detail.body.status).toBe("Completed");
   });
+
+  it("deletes a record", async () => {
+    const ingestRes = await request(app.getHttpServer())
+      .post("/api/webhooks/n8n/flow-trigger")
+      .set("x-api-key", "n8n-secret")
+      .send({ flowType: "kyc_reminder", name: "Jon", phone: "+15550010", mpl: "mpl-10" })
+      .expect(201);
+
+    await request(app.getHttpServer()).delete(`/api/flow-runs/${ingestRes.body.id}`).expect(200);
+
+    await request(app.getHttpServer()).get(`/api/flow-runs/${ingestRes.body.id}`).expect(404);
+  });
+
+  it("404s deleting a record that doesn't exist", async () => {
+    await request(app.getHttpServer()).delete("/api/flow-runs/00000000-0000-0000-0000-000000000000").expect(404);
+  });
 });
