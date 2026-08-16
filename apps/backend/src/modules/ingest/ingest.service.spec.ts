@@ -18,14 +18,13 @@ describe("IngestService", () => {
     preliminarySmsTemplate: "Hi {{name}}",
     consentSmsTemplate: "Link: {{cfaUrl}}",
     delayMinutes: 10,
+    sendSchedule: null,
     enabled: true,
   };
 
   let prisma: any;
   let flowConfigService: any;
-  let notificationService: any;
-  let scheduler: any;
-  let transitions: any;
+  let dispatchService: any;
   let enrichment: any;
   let service: IngestService;
 
@@ -33,32 +32,23 @@ describe("IngestService", () => {
     prisma = {
       flowRun: {
         findUnique: jest.fn().mockResolvedValue(null),
-        create: jest.fn().mockImplementation(({ data }) => ({
-          id: "run-1",
-          ...data,
-        })),
+        create: jest.fn().mockImplementation(({ data }) => ({ id: "run-1", ...data })),
+        update: jest.fn().mockImplementation(({ data }) => ({ id: "run-existing", ...data })),
       },
     };
     flowConfigService = { findByFlowType: jest.fn().mockResolvedValue(config) };
-    notificationService = { sendSms: jest.fn().mockResolvedValue(undefined) };
-    scheduler = { enqueueDelayed: jest.fn().mockResolvedValue("job-1") };
-    transitions = {
-      transition: jest.fn().mockImplementation((id, status) => ({ id, status })),
-      fail: jest.fn().mockImplementation((id, errorMessage) => ({ id, status: FlowRunStatus.Failed, errorMessage })),
+    dispatchService = {
+      dispatchOne: jest.fn().mockImplementation((flowRun) => ({
+        ...flowRun,
+        status: FlowRunStatus.Scheduled,
+      })),
     };
     enrichment = { enrich: jest.fn().mockImplementation((record) => Promise.resolve(record)) };
 
-    service = new IngestService(
-      prisma,
-      flowConfigService,
-      notificationService,
-      scheduler,
-      transitions,
-      enrichment,
-    );
+    service = new IngestService(prisma, flowConfigService, dispatchService, enrichment);
   });
 
-  it("creates a FlowRun, sends the preliminary SMS, and schedules the call trigger", async () => {
+  it("creates a FlowRun and dispatches it immediately when no sendSchedule is set", async () => {
     const result = await service.handleFlowTrigger(dto, { raw: true });
 
     expect(prisma.flowRun.create).toHaveBeenCalledWith(
@@ -70,15 +60,20 @@ describe("IngestService", () => {
         }),
       }),
     );
-    expect(notificationService.sendSms).toHaveBeenCalledWith("+15550001", "Hi Ana");
-    expect(scheduler.enqueueDelayed).toHaveBeenCalledWith(
-      "trigger-nlpearl-call",
-      { flowRunId: "run-1" },
-      10 * 60,
+    expect(dispatchService.dispatchOne).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "run-1" }),
+      config,
     );
-    expect(transitions.transition).toHaveBeenCalledWith("run-1", FlowRunStatus.PreSmsSent);
-    expect(transitions.transition).toHaveBeenCalledWith("run-1", FlowRunStatus.Scheduled);
-    expect(result).toBeDefined();
+    expect(result.status).toBe(FlowRunStatus.Scheduled);
+  });
+
+  it("leaves the FlowRun at Received without dispatching when the flow has a sendSchedule", async () => {
+    flowConfigService.findByFlowType.mockResolvedValue({ ...config, sendSchedule: "0 10 * * *" });
+
+    const result = await service.handleFlowTrigger(dto, {});
+
+    expect(dispatchService.dispatchOne).not.toHaveBeenCalled();
+    expect(result.status).toBe(FlowRunStatus.Received);
   });
 
   it("is idempotent: a duplicate requestId short-circuits without side effects", async () => {
@@ -89,8 +84,28 @@ describe("IngestService", () => {
 
     expect(result).toBe(existing);
     expect(prisma.flowRun.create).not.toHaveBeenCalled();
-    expect(notificationService.sendSms).not.toHaveBeenCalled();
-    expect(scheduler.enqueueDelayed).not.toHaveBeenCalled();
+    expect(dispatchService.dispatchOne).not.toHaveBeenCalled();
+  });
+
+  it("treats a different requestId for the same mpl+flowType as a new attempt on the same row", async () => {
+    const existing = { id: "run-existing", requestId: "old-request", mpl: "mpl-1", flowType: "kyc_reminder" };
+    prisma.flowRun.findUnique.mockResolvedValue(existing);
+
+    const result = await service.handleFlowTrigger({ ...dto, requestId: "new-request" }, {});
+
+    expect(prisma.flowRun.create).not.toHaveBeenCalled();
+    expect(prisma.flowRun.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "run-existing" },
+        data: expect.objectContaining({
+          requestId: "new-request",
+          status: FlowRunStatus.Received,
+          errorMessage: null,
+        }),
+      }),
+    );
+    expect(dispatchService.dispatchOne).toHaveBeenCalled();
+    expect(result).toBeDefined();
   });
 
   it("rejects records for a disabled flow before creating a FlowRun", async () => {
@@ -100,11 +115,13 @@ describe("IngestService", () => {
     expect(prisma.flowRun.create).not.toHaveBeenCalled();
   });
 
-  it("marks the FlowRun Failed and rethrows when the preliminary SMS fails", async () => {
-    notificationService.sendSms.mockRejectedValue(new Error("gateway down"));
+  it("throws when dispatchOne reports a Failed FlowRun (e.g. the preliminary SMS failed)", async () => {
+    dispatchService.dispatchOne.mockResolvedValue({
+      id: "run-1",
+      status: FlowRunStatus.Failed,
+      errorMessage: "Preliminary SMS failed: gateway down",
+    });
 
     await expect(service.handleFlowTrigger(dto, {})).rejects.toThrow("gateway down");
-    expect(transitions.fail).toHaveBeenCalledWith("run-1", expect.stringContaining("gateway down"));
-    expect(scheduler.enqueueDelayed).not.toHaveBeenCalled();
   });
 });

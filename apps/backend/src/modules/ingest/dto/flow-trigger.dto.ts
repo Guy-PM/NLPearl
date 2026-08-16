@@ -8,8 +8,20 @@ export class FlowTriggerDto {
   @IsString()
   flowType!: string;
 
+  // Some flows send a single `name`, others send `first_name`/`last_name`
+  // separately (as N8N's real payloads do) — at least one shape must
+  // resolve to a non-empty full name; see IngestService.resolveFullName.
+  @IsOptional()
   @IsString()
-  name!: string;
+  name?: string;
+
+  @IsOptional()
+  @IsString()
+  first_name?: string;
+
+  @IsOptional()
+  @IsString()
+  last_name?: string;
 
   @IsString()
   phone!: string;

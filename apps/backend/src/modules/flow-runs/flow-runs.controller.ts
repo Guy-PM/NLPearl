@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Query } from "@nestjs/common";
+import { Controller, Get, Param, Post, Query } from "@nestjs/common";
 import { FlowRunsService } from "./flow-runs.service";
 import { ListFlowRunsDto } from "./dto/list-flow-runs.dto";
 
@@ -14,5 +14,10 @@ export class FlowRunsController {
   @Get(":id")
   findOne(@Param("id") id: string) {
     return this.flowRunsService.findOne(id);
+  }
+
+  @Post(":id/resend")
+  resend(@Param("id") id: string) {
+    return this.flowRunsService.resend(id);
   }
 }

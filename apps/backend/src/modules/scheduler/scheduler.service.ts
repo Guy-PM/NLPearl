@@ -5,8 +5,8 @@ import PgBoss from "pg-boss";
 /**
  * Thin wrapper around pg-boss — a Postgres-backed job queue. Chosen over
  * RabbitMQ/BullMQ+Redis so the X-minute delayed "trigger the NLPearl
- * call" job doesn't require standing up extra infra beyond the Postgres
- * we already have, and because we only have this one job type.
+ * call" job (and the per-flow cron dispatch schedules) don't require
+ * standing up extra infra beyond the Postgres we already have.
  */
 @Injectable()
 export class SchedulerService implements OnModuleInit, OnModuleDestroy {
@@ -25,12 +25,23 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
     await this.boss.stop({ graceful: true });
   }
 
+  /**
+   * pg-boss (v10) never auto-creates a queue on `send()`/`work()`/
+   * `schedule()` — each silently no-ops (no error, no job, nothing) against
+   * a queue that doesn't exist yet. Every method below must ensure the
+   * queue exists first. `createQueue` is safe to call repeatedly.
+   */
+  private async ensureQueue(jobName: string): Promise<void> {
+    await this.boss.createQueue(jobName).catch(() => undefined);
+  }
+
   /** Schedules `jobName` to run once, `delaySeconds` from now. */
   async enqueueDelayed<T extends object>(
     jobName: string,
     data: T,
     delaySeconds: number,
   ): Promise<string | null> {
+    await this.ensureQueue(jobName);
     return this.boss.send(jobName, data, { startAfter: delaySeconds });
   }
 
@@ -39,8 +50,25 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
     jobName: string,
     handler: (data: T) => Promise<void>,
   ): Promise<void> {
+    await this.ensureQueue(jobName);
     await this.boss.work<T>(jobName, async ([job]) => {
       await handler(job.data);
     });
+  }
+
+  /**
+   * Registers/updates a recurring cron schedule for `jobName` — re-calling
+   * with a new `cron`/`data` for the same name updates it in place (pg-boss
+   * keys schedules by name). A worker must also be registered for `jobName`
+   * via `registerWorker`, or scheduled jobs will just queue up unprocessed.
+   */
+  async scheduleCron(jobName: string, cron: string, data: object, timezone: string): Promise<void> {
+    await this.ensureQueue(jobName);
+    await this.boss.schedule(jobName, cron, data, { tz: timezone });
+  }
+
+  /** Removes a cron schedule previously set with `scheduleCron`. No-op if none exists. */
+  async unschedule(jobName: string): Promise<void> {
+    await this.boss.unschedule(jobName);
   }
 }

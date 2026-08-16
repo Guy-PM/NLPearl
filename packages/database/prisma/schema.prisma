@@ -15,6 +15,26 @@ model FlowConfig {
   preliminarySmsTemplate String   @map("preliminary_sms_template")
   consentSmsTemplate     String   @map("consent_sms_template")
   delayMinutes           Int      @map("delay_minutes")
+  // Cron expression controlling when pending (Received) records for this
+  // flow get sent as a batch — e.g. "0 10,15 * * 0-4" for 10am & 3pm,
+  // Sun-Thu. Null means send immediately on ingest (today's behavior).
+  sendSchedule           String?  @map("send_schedule")
+  sendTimezone           String   @default("Asia/Jerusalem") @map("send_timezone")
+
+  // Retry policy — per-flow, evaluated against a just-finished NLPearl call.
+  // maxRetryAttempts = 0 disables auto-retry entirely for this flow.
+  maxRetryAttempts            Int      @default(0) @map("max_retry_attempts")
+  // Falls back to `delayMinutes` if unset.
+  retryDelayMinutes            Int?     @map("retry_delay_minutes")
+  // Retry if the call connected but ended faster than this. Unset = ignore duration.
+  retryMinCallDurationSeconds  Int?     @map("retry_min_call_duration_seconds")
+  // Comma-separated NLPearl `callStatus` codes counting as "didn't connect"
+  // (e.g. "5,6,7,8" = Busy/Failed/NoAnswer/Canceled).
+  retryOnCallStatuses          String?  @map("retry_on_call_statuses")
+  // Comma-separated NLPearl `conversationStatus` codes counting as "not a
+  // good outcome" (e.g. "110,150,300" = NotSuccessful/Unreachable/QueueAbandon).
+  retryOnConversationStatuses  String?  @map("retry_on_conversation_statuses")
+
   enabled                Boolean  @default(true)
   createdAt              DateTime @default(now()) @map("created_at")
   updatedAt              DateTime @updatedAt @map("updated_at")
@@ -33,34 +53,36 @@ enum FlowRunStatus {
   Failed
 }
 
+// One row per client-within-a-flow (identity = mpl + flowType), not per
+// delivery attempt. A repeat N8N delivery for the same (mpl, flowType)
+// updates this same row and appends to `events` rather than creating a
+// new one — see IngestService. Call-specific data lives on `calls`
+// (NlpearlCall) since a single client can be called more than once
+// across retries and each call needs its own summary/recording.
 model FlowRun {
-  id                    String        @id @default(uuid()) @db.Uuid
-  requestId             String        @unique @map("request_id")
-  flowType              String        @map("flow_type")
-  mpl                   String
-  phone                 String
-  name                  String
-  cfaUrl                String?       @map("cfa_url")
-  rawPayload            Json          @map("raw_payload")
-  status                FlowRunStatus @default(Received)
-  nlpearlCallRequestId  String?       @map("nlpearl_call_request_id")
-  nlpearlCallId         String?       @map("nlpearl_call_id")
-  callStatus            String?       @map("call_status")
-  conversationStatus    String?       @map("conversation_status")
-  duration              Int?
-  summary               String?
-  recordingUrl          String?       @map("recording_url")
-  collectedInfo         Json?         @map("collected_info")
-  errorMessage          String?       @map("error_message")
-  createdAt             DateTime      @default(now()) @map("created_at")
-  updatedAt             DateTime      @updatedAt @map("updated_at")
+  id            String        @id @default(uuid()) @db.Uuid
+  requestId     String        @map("request_id")
+  flowType      String        @map("flow_type")
+  mpl           String
+  phone         String
+  name          String
+  cfaUrl        String?       @map("cfa_url")
+  rawPayload    Json          @map("raw_payload")
+  status        FlowRunStatus @default(Received)
+  errorMessage  String?       @map("error_message")
+  // Lifetime count of dispatch attempts (initial + auto-retries + manual
+  // resends) — compared against FlowConfig.maxRetryAttempts.
+  attemptCount  Int           @default(1) @map("attempt_count")
+  createdAt     DateTime      @default(now()) @map("created_at")
+  updatedAt     DateTime      @updatedAt @map("updated_at")
 
   events FlowRunEvent[]
+  calls  NlpearlCall[]
 
+  @@unique([mpl, flowType])
   @@map("flow_runs")
   @@index([flowType])
   @@index([status])
-  @@index([mpl])
 }
 
 model FlowRunEvent {
@@ -74,4 +96,28 @@ model FlowRunEvent {
 
   @@map("flow_run_events")
   @@index([flowRunId])
+}
+
+// One row per real NLPearl call placed for a FlowRun — a client can be
+// called more than once across retries, and each attempt needs its own
+// status/summary/recording rather than a single flat set of columns.
+model NlpearlCall {
+  id                   String   @id @default(uuid()) @db.Uuid
+  flowRunId            String   @map("flow_run_id") @db.Uuid
+  nlpearlCallRequestId String?  @map("nlpearl_call_request_id")
+  nlpearlCallId        String?  @map("nlpearl_call_id")
+  callStatus           String?  @map("call_status")
+  conversationStatus   String?  @map("conversation_status")
+  duration             Int?
+  summary              String?
+  recordingUrl         String?  @map("recording_url")
+  collectedInfo        Json?    @map("collected_info")
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  flowRun FlowRun @relation(fields: [flowRunId], references: [id], onDelete: Cascade)
+
+  @@map("nlpearl_calls")
+  @@index([flowRunId])
+  @@index([nlpearlCallId])
 }

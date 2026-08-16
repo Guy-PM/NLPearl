@@ -57,8 +57,8 @@ describe("CallTriggerWorker", () => {
       expect.objectContaining({
         where: { id: "run-1" },
         data: expect.objectContaining({
-          nlpearlCallRequestId: "call-request-1",
           status: FlowRunStatus.CallTriggered,
+          calls: { create: { nlpearlCallRequestId: "call-request-1" } },
         }),
       }),
     );

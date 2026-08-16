@@ -9,13 +9,8 @@ export interface FlowRun {
   name: string;
   cfaUrl: string | null;
   status: FlowRunStatus;
-  nlpearlCallId: string | null;
-  callStatus: string | null;
-  conversationStatus: string | null;
-  duration: number | null;
-  summary: string | null;
-  recordingUrl: string | null;
   errorMessage: string | null;
+  attemptCount: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -27,8 +22,21 @@ export interface FlowRunEvent {
   createdAt: string;
 }
 
+export interface NlpearlCall {
+  id: string;
+  nlpearlCallRequestId: string | null;
+  nlpearlCallId: string | null;
+  callStatus: string | null;
+  conversationStatus: string | null;
+  duration: number | null;
+  summary: string | null;
+  recordingUrl: string | null;
+  createdAt: string;
+}
+
 export interface FlowRunDetail extends FlowRun {
   events: FlowRunEvent[];
+  calls: NlpearlCall[];
 }
 
 export interface FlowRunListResponse {
@@ -45,6 +53,13 @@ export interface FlowConfig {
   preliminarySmsTemplate: string;
   consentSmsTemplate: string;
   delayMinutes: number;
+  sendSchedule: string | null;
+  sendTimezone: string;
+  maxRetryAttempts: number;
+  retryDelayMinutes: number | null;
+  retryMinCallDurationSeconds: number | null;
+  retryOnCallStatuses: string | null;
+  retryOnConversationStatuses: string | null;
   enabled: boolean;
   createdAt: string;
   updatedAt: string;

@@ -9,13 +9,30 @@ export default function FlowRunDetailPage() {
   const { id } = useParams<{ id: string }>();
   const [flowRun, setFlowRun] = useState<FlowRunDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [resending, setResending] = useState(false);
 
-  useEffect(() => {
+  const load = () => {
     api
       .get<FlowRunDetail>(`/flow-runs/${id}`)
       .then(setFlowRun)
       .catch((err) => setError(err instanceof ApiError ? err.message : "Failed to load record"));
-  }, [id]);
+  };
+
+  useEffect(load, [id]);
+
+  const resend = async () => {
+    if (!confirm("Resend this record now? This will re-send the preliminary SMS and re-trigger the call.")) return;
+    setResending(true);
+    setError(null);
+    try {
+      await api.post(`/flow-runs/${id}/resend`, {});
+      load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to resend");
+    } finally {
+      setResending(false);
+    }
+  };
 
   if (error) return <div className="error">{error}</div>;
   if (!flowRun) return <p>Loading…</p>;
@@ -30,23 +47,35 @@ export default function FlowRunDetailPage() {
         <p>Flow type: {flowRun.flowType}</p>
         <p>Phone: {flowRun.phone}</p>
         <p>MPL: {flowRun.mpl}</p>
+        <p>Attempts so far: {flowRun.attemptCount}</p>
         {flowRun.cfaUrl && <p>CFA URL: {flowRun.cfaUrl}</p>}
         {flowRun.errorMessage && <p className="error">{flowRun.errorMessage}</p>}
+        <div className="actions">
+          <button onClick={resend} disabled={resending}>
+            {resending ? "Resending…" : "Resend"}
+          </button>
+        </div>
       </div>
 
-      {flowRun.summary && (
+      {flowRun.calls.length > 0 && (
         <div className="card">
-          <h3>Call summary</h3>
-          <p>{flowRun.summary}</p>
-          {flowRun.duration !== null && <p>Duration: {flowRun.duration}s</p>}
-          {flowRun.conversationStatus && <p>Outcome: {flowRun.conversationStatus}</p>}
-          {flowRun.recordingUrl && (
-            <p>
-              <a href={flowRun.recordingUrl} target="_blank" rel="noreferrer">
-                Recording
-              </a>
-            </p>
-          )}
+          <h3>Call history</h3>
+          {flowRun.calls.map((call) => (
+            <div key={call.id} style={{ marginBottom: 12, paddingBottom: 12, borderBottom: "1px solid var(--border)" }}>
+              <p>{new Date(call.createdAt).toLocaleString()}</p>
+              {call.summary && <p>{call.summary}</p>}
+              {call.duration !== null && <p>Duration: {call.duration}s</p>}
+              {call.conversationStatus && <p>Outcome: {call.conversationStatus}</p>}
+              {!call.nlpearlCallId && <p>Call not yet completed.</p>}
+              {call.recordingUrl && (
+                <p>
+                  <a href={call.recordingUrl} target="_blank" rel="noreferrer">
+                    Recording
+                  </a>
+                </p>
+              )}
+            </div>
+          ))}
         </div>
       )}
 

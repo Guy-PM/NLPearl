@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { api, ApiError } from "@/lib/api";
-import { FlowRunListResponse, FlowRunStatus } from "@/lib/types";
+import { FlowConfig, FlowRunListResponse, FlowRunStatus } from "@/lib/types";
 
 export default function FlowRunsPage() {
   const [flowType, setFlowType] = useState("");
@@ -13,6 +13,11 @@ export default function FlowRunsPage() {
   const [data, setData] = useState<FlowRunListResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [flowConfigs, setFlowConfigs] = useState<FlowConfig[]>([]);
+
+  useEffect(() => {
+    api.get<FlowConfig[]>("/flow-configs").then(setFlowConfigs).catch(() => {});
+  }, []);
 
   useEffect(() => {
     const params = new URLSearchParams({ page: String(page), pageSize: "25" });
@@ -36,14 +41,20 @@ export default function FlowRunsPage() {
       <h1>Flow Runs</h1>
 
       <div className="filters">
-        <input
-          placeholder="Filter by flow type"
+        <select
           value={flowType}
           onChange={(e) => {
             setPage(1);
             setFlowType(e.target.value);
           }}
-        />
+        >
+          <option value="">All flows</option>
+          {flowConfigs.map((c) => (
+            <option key={c.flowType} value={c.flowType}>
+              {c.flowType}
+            </option>
+          ))}
+        </select>
         <select
           value={status}
           onChange={(e) => {

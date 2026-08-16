@@ -13,6 +13,10 @@ import { WebhooksModule } from "./modules/webhooks/webhooks.module";
 
 @Module({
   imports: [
+    // The root .env is loaded into process.env by dotenv-cli, from the
+    // "dev"/"start" scripts in package.json — not here. `nest start --watch`
+    // compiles in-memory (webpack), so a __dirname-relative envFilePath
+    // isn't reliable; process.env is.
     ConfigModule.forRoot({ isGlobal: true }),
     PrismaModule,
     HealthModule,

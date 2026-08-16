@@ -2,14 +2,10 @@ import { BadRequestException, Inject, Injectable, Logger } from "@nestjs/common"
 import { FlowRun, FlowRunStatus } from "@nlpearl/database";
 import { FlowTriggerPayload } from "@nlpearl/shared-types";
 import { PrismaService } from "../../prisma/prisma.service";
-import { renderTemplate } from "../../common/render-template";
 import { FlowConfigService } from "../flow-config/flow-config.service";
-import { NotificationService } from "../notification/notification.service";
-import { SchedulerService } from "../scheduler/scheduler.service";
+import { MessageDispatchService } from "../message-dispatch/message-dispatch.service";
 import { RECORD_ENRICHMENT_PORT, RecordEnrichmentPort } from "../enrichment/enrichment.port";
-import { FlowRunTransitionService } from "../flow-runs/flow-run-transition.service";
 import { FlowTriggerDto } from "./dto/flow-trigger.dto";
-import { TRIGGER_NLPEARL_CALL_JOB } from "./ingest.constants";
 
 @Injectable()
 export class IngestService {
@@ -18,9 +14,7 @@ export class IngestService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly flowConfigService: FlowConfigService,
-    private readonly notificationService: NotificationService,
-    private readonly scheduler: SchedulerService,
-    private readonly transitions: FlowRunTransitionService,
+    private readonly dispatchService: MessageDispatchService,
     @Inject(RECORD_ENRICHMENT_PORT) private readonly enrichment: RecordEnrichmentPort,
   ) {}
 
@@ -30,11 +24,19 @@ export class IngestService {
     return `${dto.flowType}:${dto.mpl}:${day}`;
   }
 
+  /** Prefers an explicit `name`; otherwise joins `first_name`/`last_name`. */
+  private resolveFullName(dto: FlowTriggerDto): string {
+    if (dto.name) return dto.name;
+    return [dto.first_name, dto.last_name].filter(Boolean).join(" ").trim();
+  }
+
   async handleFlowTrigger(dto: FlowTriggerDto, rawPayload: unknown): Promise<FlowRun> {
     const requestId = dto.requestId ?? this.synthesizeRequestId(dto);
 
-    const existing = await this.prisma.flowRun.findUnique({ where: { requestId } });
-    if (existing) {
+    const existing = await this.prisma.flowRun.findUnique({
+      where: { mpl_flowType: { mpl: dto.mpl, flowType: dto.flowType } },
+    });
+    if (existing && existing.requestId === requestId) {
       this.logger.log(`Duplicate flow-trigger for requestId=${requestId}, ignoring`);
       return existing;
     }
@@ -44,36 +46,53 @@ export class IngestService {
       throw new BadRequestException(`FlowConfig "${dto.flowType}" is disabled`);
     }
 
-    const enriched = await this.enrichment.enrich(dto as FlowTriggerPayload);
-
-    const flowRun = await this.prisma.flowRun.create({
-      data: {
-        requestId,
-        flowType: enriched.flowType,
-        mpl: enriched.mpl,
-        phone: enriched.phone,
-        name: enriched.name,
-        cfaUrl: enriched.cfaUrl,
-        rawPayload: rawPayload as object,
-        status: FlowRunStatus.Received,
-        events: { create: { status: FlowRunStatus.Received } },
-      },
-    });
-
-    try {
-      const text = renderTemplate(config.preliminarySmsTemplate, enriched);
-      await this.notificationService.sendSms(enriched.phone, text);
-      await this.transitions.transition(flowRun.id, FlowRunStatus.PreSmsSent);
-    } catch (error) {
-      await this.transitions.fail(flowRun.id, `Preliminary SMS failed: ${(error as Error).message}`);
-      throw error;
+    const fullName = this.resolveFullName(dto);
+    if (!fullName) {
+      throw new BadRequestException("Either `name` or `first_name`/`last_name` must be provided");
     }
 
-    await this.scheduler.enqueueDelayed(
-      TRIGGER_NLPEARL_CALL_JOB,
-      { flowRunId: flowRun.id },
-      config.delayMinutes * 60,
-    );
-    return this.transitions.transition(flowRun.id, FlowRunStatus.Scheduled);
+    const enriched = await this.enrichment.enrich(dto as FlowTriggerPayload);
+
+    // One FlowRun per (mpl, flowType) — a new requestId for an existing
+    // client+flow is a new attempt on the same record, not a new row.
+    const flowRun = existing
+      ? await this.prisma.flowRun.update({
+          where: { id: existing.id },
+          data: {
+            requestId,
+            name: fullName,
+            phone: enriched.phone,
+            cfaUrl: enriched.cfaUrl,
+            rawPayload: rawPayload as object,
+            status: FlowRunStatus.Received,
+            errorMessage: null,
+            events: { create: { status: FlowRunStatus.Received, detail: `New attempt: ${requestId}` } },
+          },
+        })
+      : await this.prisma.flowRun.create({
+          data: {
+            requestId,
+            flowType: enriched.flowType,
+            mpl: enriched.mpl,
+            phone: enriched.phone,
+            name: fullName,
+            cfaUrl: enriched.cfaUrl,
+            rawPayload: rawPayload as object,
+            status: FlowRunStatus.Received,
+            events: { create: { status: FlowRunStatus.Received } },
+          },
+        });
+
+    if (config.sendSchedule) {
+      // Batched: leave it at Received — the flow's cron dispatch job will
+      // send it at the next scheduled time.
+      return flowRun;
+    }
+
+    const dispatched = await this.dispatchService.dispatchOne(flowRun, config);
+    if (dispatched.status === FlowRunStatus.Failed) {
+      throw new Error(dispatched.errorMessage ?? "Preliminary SMS failed");
+    }
+    return dispatched;
   }
 }

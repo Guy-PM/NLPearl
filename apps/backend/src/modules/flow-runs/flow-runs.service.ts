@@ -1,11 +1,17 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@nlpearl/database";
 import { PrismaService } from "../../prisma/prisma.service";
+import { FlowConfigService } from "../flow-config/flow-config.service";
+import { MessageDispatchService } from "../message-dispatch/message-dispatch.service";
 import { ListFlowRunsDto } from "./dto/list-flow-runs.dto";
 
 @Injectable()
 export class FlowRunsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly flowConfigService: FlowConfigService,
+    private readonly dispatchService: MessageDispatchService,
+  ) {}
 
   async findAll(query: ListFlowRunsDto) {
     const page = query.page ?? 1;
@@ -41,7 +47,10 @@ export class FlowRunsService {
   async findOne(id: string) {
     const flowRun = await this.prisma.flowRun.findUnique({
       where: { id },
-      include: { events: { orderBy: { createdAt: "asc" } } },
+      include: {
+        events: { orderBy: { createdAt: "asc" } },
+        calls: { orderBy: { createdAt: "asc" } },
+      },
     });
     if (!flowRun) {
       throw new NotFoundException(`FlowRun "${id}" not found`);
@@ -49,7 +58,13 @@ export class FlowRunsService {
     return flowRun;
   }
 
-  findByNlpearlCallId(nlpearlCallId: string) {
-    return this.prisma.flowRun.findFirst({ where: { nlpearlCallId } });
+  /** Manual "Resend" action — re-runs the full SMS+call sequence right now. */
+  async resend(id: string) {
+    const flowRun = await this.prisma.flowRun.findUnique({ where: { id } });
+    if (!flowRun) {
+      throw new NotFoundException(`FlowRun "${id}" not found`);
+    }
+    const config = await this.flowConfigService.findByFlowType(flowRun.flowType);
+    return this.dispatchService.resendNow(flowRun, config);
   }
 }

@@ -56,8 +56,8 @@ export class CallTriggerWorker implements OnModuleInit {
       await this.prisma.flowRun.update({
         where: { id: flowRun.id },
         data: {
-          nlpearlCallRequestId: response.id,
           status: FlowRunStatus.CallTriggered,
+          calls: { create: { nlpearlCallRequestId: response.id } },
           events: { create: { status: FlowRunStatus.CallTriggered, detail: response.id } },
         },
       });
