@@ -371,4 +371,28 @@ describe("Flow pipeline (e2e, stubbed)", () => {
       .send({ phone: "+15550006", flow: "kyc_reminder", cta_complete: true })
       .expect(401);
   });
+
+  it("skips the NLPearl call entirely when CTA completes before the delayed job fires", async () => {
+    const ingestRes = await request(app.getHttpServer())
+      .post("/api/webhooks/n8n/flow-trigger")
+      .set("x-api-key", "n8n-secret")
+      .send({ flowType: "kyc_reminder", name: "Gil", phone: "+15550007", mpl: "mpl-7" })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post("/api/webhooks/n8n/cta-complete")
+      .set("x-api-key", "n8n-secret")
+      .send({ phone: "+15550007", flow: "kyc_reminder", cta_complete: true })
+      .expect(200);
+
+    const callCountBefore = nlpearlService.makeCall.mock.calls.length;
+    await registeredJobHandlers["trigger-nlpearl-call"]({ flowRunId: ingestRes.body.id });
+
+    expect(nlpearlService.makeCall.mock.calls.length).toBe(callCountBefore);
+
+    const detail = await request(app.getHttpServer())
+      .get(`/api/flow-runs/${ingestRes.body.id}`)
+      .expect(200);
+    expect(detail.body.status).toBe("Completed");
+  });
 });

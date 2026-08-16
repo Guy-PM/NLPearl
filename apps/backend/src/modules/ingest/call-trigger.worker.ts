@@ -41,6 +41,20 @@ export class CallTriggerWorker implements OnModuleInit {
       return;
     }
 
+    // Every path that ends in an actual NLPearl call (initial dispatch,
+    // cron-batched dispatch, auto-retry, manual resend) funnels through
+    // this one job before placing it — a single check here is enough to
+    // cover all of them.
+    if (flowRun.ctaCompleted) {
+      this.logger.log(`FlowRun ${flowRunId} already has CTA completed, skipping call trigger`);
+      await this.transitions.transition(
+        flowRun.id,
+        FlowRunStatus.Completed,
+        "CTA already completed — call skipped",
+      );
+      return;
+    }
+
     try {
       const config = await this.flowConfigService.findByFlowType(flowRun.flowType);
       const response = await this.nlpearlService.makeCall(config.nlpearlOutboundId, {

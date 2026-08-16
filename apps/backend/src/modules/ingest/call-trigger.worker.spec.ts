@@ -36,7 +36,7 @@ describe("CallTriggerWorker", () => {
         return Promise.resolve();
       }),
     };
-    transitions = { fail: jest.fn().mockResolvedValue({}) };
+    transitions = { fail: jest.fn().mockResolvedValue({}), transition: jest.fn().mockResolvedValue({}) };
 
     worker = new CallTriggerWorker(prisma, flowConfigService, nlpearlService, scheduler, transitions);
     await worker.onModuleInit();
@@ -78,5 +78,18 @@ describe("CallTriggerWorker", () => {
 
     expect(nlpearlService.makeCall).not.toHaveBeenCalled();
     expect(prisma.flowRun.update).not.toHaveBeenCalled();
+  });
+
+  it("skips the call and marks Completed when the CTA was already completed", async () => {
+    prisma.flowRun.findUnique.mockResolvedValue({ ...flowRun, ctaCompleted: true });
+
+    await registeredHandler({ flowRunId: "run-1" });
+
+    expect(nlpearlService.makeCall).not.toHaveBeenCalled();
+    expect(transitions.transition).toHaveBeenCalledWith(
+      "run-1",
+      FlowRunStatus.Completed,
+      expect.stringContaining("CTA"),
+    );
   });
 });
