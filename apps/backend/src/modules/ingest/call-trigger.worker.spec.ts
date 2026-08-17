@@ -10,6 +10,7 @@ describe("CallTriggerWorker", () => {
     name: "Ana",
     mpl: "mpl-1",
     cfaUrl: "https://cfa.example/1",
+    attemptCount: 1,
   };
   const config = { flowType: "kyc_reminder", nlpearlOutboundId: "outbound-1" };
 
@@ -38,7 +39,10 @@ describe("CallTriggerWorker", () => {
       }),
     };
     transitions = { fail: jest.fn().mockResolvedValue({}), transition: jest.fn().mockResolvedValue({}) };
-    dispatchService = { skipIfCtaCompleted: jest.fn().mockResolvedValue(null) };
+    dispatchService = {
+      skipIfCtaCompleted: jest.fn().mockResolvedValue(null),
+      scheduleRetry: jest.fn().mockResolvedValue(undefined),
+    };
 
     worker = new CallTriggerWorker(prisma, flowConfigService, nlpearlService, scheduler, transitions, dispatchService);
     await worker.onModuleInit();
@@ -66,11 +70,38 @@ describe("CallTriggerWorker", () => {
     );
   });
 
-  it("marks the FlowRun Failed if the NLPearl call trigger fails, without throwing", async () => {
+  it("marks the FlowRun Failed if the NLPearl call trigger fails and the flow has no retries configured", async () => {
     nlpearlService.makeCall.mockRejectedValue(new Error("NLPearl 500"));
 
     await expect(registeredHandler({ flowRunId: "run-1" })).resolves.toBeUndefined();
     expect(transitions.fail).toHaveBeenCalledWith("run-1", expect.stringContaining("NLPearl 500"));
+    expect(dispatchService.scheduleRetry).not.toHaveBeenCalled();
+  });
+
+  it("schedules an auto-retry when the call trigger fails and the flow's retry attempts aren't exhausted", async () => {
+    const retryConfig = { ...config, maxRetryAttempts: 2 };
+    flowConfigService.findByFlowType.mockResolvedValue(retryConfig);
+    nlpearlService.makeCall.mockRejectedValue(new Error("Outbound is inactive"));
+
+    await registeredHandler({ flowRunId: "run-1" });
+
+    expect(dispatchService.scheduleRetry).toHaveBeenCalledWith(
+      flowRun,
+      retryConfig,
+      expect.stringContaining("Outbound is inactive"),
+    );
+    expect(transitions.fail).not.toHaveBeenCalled();
+  });
+
+  it("marks the FlowRun Failed once retry attempts are exhausted, even with retries configured", async () => {
+    flowConfigService.findByFlowType.mockResolvedValue({ ...config, maxRetryAttempts: 1 });
+    prisma.flowRun.findUnique.mockResolvedValue({ ...flowRun, attemptCount: 2 });
+    nlpearlService.makeCall.mockRejectedValue(new Error("Outbound is inactive"));
+
+    await registeredHandler({ flowRunId: "run-1" });
+
+    expect(transitions.fail).toHaveBeenCalledWith("run-1", expect.stringContaining("Outbound is inactive"));
+    expect(dispatchService.scheduleRetry).not.toHaveBeenCalled();
   });
 
   it("does nothing if the FlowRun no longer exists", async () => {

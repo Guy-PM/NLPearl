@@ -81,10 +81,13 @@ export function createFakePrisma() {
         if (where.id) record = flowRuns.get(where.id) ?? null;
         else if (where.requestId) {
           record = [...flowRuns.values()].find((r) => r.requestId === where.requestId) ?? null;
-        } else if (where.phone_flowType) {
+        } else if (where.phone_flowType_mpl) {
           record =
             [...flowRuns.values()].find(
-              (r) => r.phone === where.phone_flowType.phone && r.flowType === where.phone_flowType.flowType,
+              (r) =>
+                r.phone === where.phone_flowType_mpl.phone &&
+                r.flowType === where.phone_flowType_mpl.flowType &&
+                r.mpl === where.phone_flowType_mpl.mpl,
             ) ?? null;
         }
         if (record && include?.calls) record = { ...record, calls: callsForFlowRun(record.id) };
@@ -106,6 +109,8 @@ export function createFakePrisma() {
           id: randomUUID(),
           createdAt: now,
           updatedAt: now,
+          attemptCount: 1,
+          ctaCompleted: false,
           events: events?.create ? [{ id: randomUUID(), createdAt: now, ...events.create }] : [],
           ...stripUndefined(rest),
         };

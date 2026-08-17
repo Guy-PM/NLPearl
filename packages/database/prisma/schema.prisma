@@ -53,11 +53,13 @@ enum FlowRunStatus {
   Failed
 }
 
-// One row per client-within-a-flow (identity = phone + flowType), not per
-// delivery attempt. A repeat N8N delivery for the same (phone, flowType)
-// updates this same row and appends to `events` rather than creating a
-// new one — see IngestService. mpl can change across attempts (e.g. a
-// correction) without creating a duplicate row. Call-specific data lives on `calls`
+// One row per client-within-a-flow (identity = phone + flowType + mpl), not
+// per delivery attempt. A repeat N8N delivery matching all three fields
+// updates this same row and appends to `events` rather than creating a new
+// one — see IngestService. If phone+flowType match but mpl differs, that's
+// treated as a genuinely separate record (e.g. a second concurrent contract
+// for the same client within the same flow), not an update. Call-specific
+// data lives on `calls`
 // (NlpearlCall) since a single client can be called more than once
 // across retries and each call needs its own summary/recording.
 model FlowRun {
@@ -86,7 +88,7 @@ model FlowRun {
   events FlowRunEvent[]
   calls  NlpearlCall[]
 
-  @@unique([phone, flowType])
+  @@unique([phone, flowType, mpl])
   @@map("flow_runs")
   @@index([flowType])
   @@index([status])

@@ -192,6 +192,8 @@ describe("Flow pipeline (e2e, stubbed)", () => {
 
     expect(res.body.id).toBe(flowRunId);
     expect(res.body.status).toBe("Scheduled");
+    expect(res.body.duplicate).toBe(false);
+    expect(res.body.message).toMatch(/already has a record/);
     expect(notificationService.sendSms).toHaveBeenCalledWith(
       "+15550001",
       "Hi Ana, expect a call soon.",
@@ -230,23 +232,32 @@ describe("Flow pipeline (e2e, stubbed)", () => {
     expect(notificationService.sendSms.mock.calls.length).toBe(callCountBefore);
   });
 
-  it("flags a resubmission for the same phone+flowType as reusing the existing record, but allows a different flowType", async () => {
+  it("creates a separate record when phone+flowType match but mpl differs, or when flowType differs", async () => {
     const first = await request(app.getHttpServer())
       .post("/api/webhooks/n8n/flow-trigger")
       .set("x-api-key", "n8n-secret")
       .send({ ...payload, phone: "+15550060", mpl: "mpl-60a" })
       .expect(201);
+    expect(first.body.duplicate).toBe(false);
+    expect(first.body.message).toBeUndefined();
 
-    const second = await request(app.getHttpServer())
+    // Same phone, same flowType, different mpl -> a genuinely separate record.
+    const differentMpl = await request(app.getHttpServer())
       .post("/api/webhooks/n8n/flow-trigger")
       .set("x-api-key", "n8n-secret")
-      .send({ ...payload, phone: "+15550060", mpl: "mpl-60b", requestId: "explicit-different-request-id" })
+      .send({ ...payload, phone: "+15550060", mpl: "mpl-60b" })
       .expect(201);
 
-    expect(second.body.id).toBe(first.body.id);
-    expect(second.body.duplicate).toBe(false);
-    expect(second.body.message).toMatch(/already has a record/);
+    expect(differentMpl.body.id).not.toBe(first.body.id);
+    expect(differentMpl.body.duplicate).toBe(false);
+    expect(differentMpl.body.message).toBeUndefined();
 
+    const list = await request(app.getHttpServer())
+      .get(`/api/flow-runs?flowType=kyc_reminder&search=mpl-60`)
+      .expect(200);
+    expect(list.body.total).toBe(2);
+
+    // Same phone, different flowType -> also a separate record.
     await request(app.getHttpServer())
       .post("/api/flow-configs")
       .send({
@@ -261,10 +272,11 @@ describe("Flow pipeline (e2e, stubbed)", () => {
     const differentFlow = await request(app.getHttpServer())
       .post("/api/webhooks/n8n/flow-trigger")
       .set("x-api-key", "n8n-secret")
-      .send({ ...payload, flowType: "weddings_flow", phone: "+15550060", mpl: "mpl-60c" })
+      .send({ ...payload, flowType: "weddings_flow", phone: "+15550060", mpl: "mpl-60a" })
       .expect(201);
 
     expect(differentFlow.body.id).not.toBe(first.body.id);
+    expect(differentFlow.body.id).not.toBe(differentMpl.body.id);
     expect(differentFlow.body.duplicate).toBe(false);
     expect(differentFlow.body.message).toBeUndefined();
   });
@@ -406,6 +418,62 @@ describe("Flow pipeline (e2e, stubbed)", () => {
     expect(notificationService.sendSms).toHaveBeenLastCalledWith("+15550004", "Hi Dov, retry flow.");
   });
 
+  it("auto-retries when the NLPearl call trigger itself fails (e.g. inactive outbound)", async () => {
+    await request(app.getHttpServer())
+      .post("/api/flow-configs")
+      .send({
+        flowType: "trigger_fail_retry_flow",
+        nlpearlOutboundId: "outbound-inactive",
+        preliminarySmsTemplate: "Hi {{name}}, trigger-fail retry flow.",
+        consentSmsTemplate: "Link: {{cfaUrl}}",
+        delayMinutes: 5,
+        maxRetryAttempts: 1,
+        retryDelayMinutes: 4,
+      })
+      .expect(201);
+
+    const ingestRes = await request(app.getHttpServer())
+      .post("/api/webhooks/n8n/flow-trigger")
+      .set("x-api-key", "n8n-secret")
+      .send({
+        flowType: "trigger_fail_retry_flow",
+        name: "Kim",
+        first_name: "Kim",
+        last_name: "Test",
+        partner: "test-partner",
+        phone: "+15550011",
+        mpl: "mpl-11",
+      })
+      .expect(201);
+    const flowRunIdForTriggerFail = ingestRes.body.id;
+
+    nlpearlService.makeCall.mockRejectedValueOnce(new Error("Outbound is inactive"));
+    await registeredJobHandlers["trigger-nlpearl-call"]({ flowRunId: flowRunIdForTriggerFail });
+
+    const afterFailedTrigger = await request(app.getHttpServer())
+      .get(`/api/flow-runs/${flowRunIdForTriggerFail}`)
+      .expect(200);
+    expect(afterFailedTrigger.body.status).toBe("Scheduled");
+    expect(afterFailedTrigger.body.events.some((e: any) => /Outbound is inactive/.test(e.detail ?? ""))).toBe(true);
+    expect(schedulerService.enqueueDelayed).toHaveBeenCalledWith(
+      "retry-flow-run",
+      { flowRunId: flowRunIdForTriggerFail },
+      240,
+    );
+
+    // Retry job fires and the trigger succeeds this time.
+    nlpearlService.makeCall.mockResolvedValueOnce({ id: "call-request-retry-1" });
+    const sendCountBeforeRetry = notificationService.sendSms.mock.calls.length;
+    await registeredJobHandlers["retry-flow-run"]({ flowRunId: flowRunIdForTriggerFail });
+    await registeredJobHandlers["trigger-nlpearl-call"]({ flowRunId: flowRunIdForTriggerFail });
+
+    expect(notificationService.sendSms.mock.calls.length).toBe(sendCountBeforeRetry + 1);
+    const afterRetry = await request(app.getHttpServer())
+      .get(`/api/flow-runs/${flowRunIdForTriggerFail}`)
+      .expect(200);
+    expect(afterRetry.body.status).toBe("CallTriggered");
+  });
+
   it("resends immediately via the manual endpoint, bypassing the retry cap", async () => {
     const ingestRes = await request(app.getHttpServer())
       .post("/api/webhooks/n8n/flow-trigger")
@@ -450,7 +518,7 @@ describe("Flow pipeline (e2e, stubbed)", () => {
     await request(app.getHttpServer())
       .post("/api/webhooks/n8n/cta-complete")
       .set("x-api-key", "n8n-secret")
-      .send({ phone: "+15550006", flow: "kyc_reminder", cta_complete: true })
+      .send({ phone: "+15550006", flow: "kyc_reminder", mpl: "mpl-6", cta_complete: true })
       .expect(200);
 
     const detail = await request(app.getHttpServer())
@@ -463,7 +531,7 @@ describe("Flow pipeline (e2e, stubbed)", () => {
   it("rejects the cta-complete webhook without the shared secret", async () => {
     await request(app.getHttpServer())
       .post("/api/webhooks/n8n/cta-complete")
-      .send({ phone: "+15550006", flow: "kyc_reminder", cta_complete: true })
+      .send({ phone: "+15550006", flow: "kyc_reminder", mpl: "mpl-6", cta_complete: true })
       .expect(401);
   });
 
@@ -485,7 +553,7 @@ describe("Flow pipeline (e2e, stubbed)", () => {
     await request(app.getHttpServer())
       .post("/api/webhooks/n8n/cta-complete")
       .set("x-api-key", "n8n-secret")
-      .send({ phone: "+15550007", flow: "kyc_reminder", cta_complete: true })
+      .send({ phone: "+15550007", flow: "kyc_reminder", mpl: "mpl-7", cta_complete: true })
       .expect(200);
 
     const callCountBefore = nlpearlService.makeCall.mock.calls.length;
@@ -517,7 +585,7 @@ describe("Flow pipeline (e2e, stubbed)", () => {
     await request(app.getHttpServer())
       .post("/api/webhooks/n8n/cta-complete")
       .set("x-api-key", "n8n-secret")
-      .send({ phone: "+15550008", flow: "kyc_reminder", cta_complete: true })
+      .send({ phone: "+15550008", flow: "kyc_reminder", mpl: "mpl-8", cta_complete: true })
       .expect(200);
 
     const sendCountBefore = notificationService.sendSms.mock.calls.length;
@@ -561,7 +629,7 @@ describe("Flow pipeline (e2e, stubbed)", () => {
     await request(app.getHttpServer())
       .post("/api/webhooks/n8n/cta-complete")
       .set("x-api-key", "n8n-secret")
-      .send({ phone: "+15550009", flow: "batched_flow", cta_complete: true })
+      .send({ phone: "+15550009", flow: "batched_flow", mpl: "mpl-9", cta_complete: true })
       .expect(200);
 
     const sendCountBefore = notificationService.sendSms.mock.calls.length;

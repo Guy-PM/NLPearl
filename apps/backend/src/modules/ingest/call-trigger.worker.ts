@@ -3,6 +3,7 @@ import { FlowRunStatus } from "@nlpearl/database";
 import { PrismaService } from "../../prisma/prisma.service";
 import { FlowConfigService } from "../flow-config/flow-config.service";
 import { MessageDispatchService } from "../message-dispatch/message-dispatch.service";
+import { needsRetryAfterTriggerFailure } from "../message-dispatch/retry-policy";
 import { NlpearlService } from "../nlpearl/nlpearl.service";
 import { SchedulerService } from "../scheduler/scheduler.service";
 import { FlowRunTransitionService } from "../flow-runs/flow-run-transition.service";
@@ -52,8 +53,9 @@ export class CallTriggerWorker implements OnModuleInit {
       return;
     }
 
+    const config = await this.flowConfigService.findByFlowType(flowRun.flowType);
+
     try {
-      const config = await this.flowConfigService.findByFlowType(flowRun.flowType);
       const response = await this.nlpearlService.makeCall(config.nlpearlOutboundId, {
         to: flowRun.phone,
         callData: {
@@ -73,7 +75,13 @@ export class CallTriggerWorker implements OnModuleInit {
         },
       });
     } catch (error) {
-      await this.transitions.fail(flowRun.id, `NLPearl call trigger failed: ${(error as Error).message}`);
+      const errorMessage = `NLPearl call trigger failed: ${(error as Error).message}`;
+      if (needsRetryAfterTriggerFailure(config, flowRun.attemptCount)) {
+        this.logger.warn(`${errorMessage} — scheduling auto-retry for FlowRun ${flowRun.id}`);
+        await this.dispatchService.scheduleRetry(flowRun, config, errorMessage);
+      } else {
+        await this.transitions.fail(flowRun.id, errorMessage);
+      }
     }
   }
 }

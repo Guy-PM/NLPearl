@@ -13,6 +13,11 @@ function parseCsv(value: string | null | undefined): string[] {
     .filter(Boolean);
 }
 
+/** Shared by both retry checks below. `attemptCount` includes the attempt just made. */
+function withinRetryCap(config: FlowConfig, attemptCount: number): boolean {
+  return config.maxRetryAttempts > 0 && attemptCount < config.maxRetryAttempts + 1;
+}
+
 /**
  * Whether a just-finished call should trigger an automatic retry, per the
  * flow's own configurable rules (attempt cap, call/conversation status
@@ -20,8 +25,7 @@ function parseCsv(value: string | null | undefined): string[] {
  * already made (including the one that just finished).
  */
 export function needsRetry(config: FlowConfig, attemptCount: number, call: FinishedCall): boolean {
-  if (config.maxRetryAttempts <= 0) return false;
-  if (attemptCount >= config.maxRetryAttempts + 1) return false;
+  if (!withinRetryCap(config, attemptCount)) return false;
 
   const callStatuses = parseCsv(config.retryOnCallStatuses);
   if (call.callStatus && callStatuses.includes(call.callStatus)) return true;
@@ -38,4 +42,14 @@ export function needsRetry(config: FlowConfig, attemptCount: number, call: Finis
   }
 
   return false;
+}
+
+/**
+ * Whether a failed call-trigger attempt (the NLPearl API call to place the
+ * call itself errored — e.g. the outbound is inactive) should be retried.
+ * Unlike `needsRetry`, there's no call outcome to evaluate here since the
+ * call never happened — only the flow's attempt cap decides.
+ */
+export function needsRetryAfterTriggerFailure(config: FlowConfig, attemptCount: number): boolean {
+  return withinRetryCap(config, attemptCount);
 }

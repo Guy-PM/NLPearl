@@ -1,4 +1,4 @@
-import { needsRetry } from "./retry-policy";
+import { needsRetry, needsRetryAfterTriggerFailure } from "./retry-policy";
 
 describe("needsRetry", () => {
   const baseConfig = {
@@ -41,5 +41,21 @@ describe("needsRetry", () => {
         duration: 1,
       }),
     ).toBe(false);
+  });
+});
+
+describe("needsRetryAfterTriggerFailure", () => {
+  const baseConfig = { maxRetryAttempts: 2 } as any;
+
+  it("is false when maxRetryAttempts is 0", () => {
+    expect(needsRetryAfterTriggerFailure({ ...baseConfig, maxRetryAttempts: 0 }, 1)).toBe(false);
+  });
+
+  it("is true when attempts remain, regardless of any call outcome", () => {
+    expect(needsRetryAfterTriggerFailure(baseConfig, 1)).toBe(true);
+  });
+
+  it("is false once attempts are exhausted", () => {
+    expect(needsRetryAfterTriggerFailure(baseConfig, 3)).toBe(false);
   });
 });

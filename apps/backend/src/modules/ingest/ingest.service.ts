@@ -38,7 +38,7 @@ export class IngestService {
     const requestId = dto.requestId ?? this.synthesizeRequestId(dto);
 
     const existing = await this.prisma.flowRun.findUnique({
-      where: { phone_flowType: { phone: dto.phone, flowType: dto.flowType } },
+      where: { phone_flowType_mpl: { phone: dto.phone, flowType: dto.flowType, mpl: dto.mpl } },
     });
     if (existing && existing.requestId === requestId) {
       this.logger.log(`Duplicate flow-trigger for requestId=${requestId}, ignoring`);
@@ -58,14 +58,14 @@ export class IngestService {
     const enriched = await this.enrichment.enrich(dto as FlowTriggerPayload);
     const outcome = existing ? "updated" : "created";
 
-    // One FlowRun per (phone, flowType) — a new requestId for an existing
-    // client+flow is a new attempt on the same record, not a new row.
+    // One FlowRun per (phone, flowType, mpl) — a new requestId for an
+    // existing exact match is a new attempt on the same record, not a new
+    // row; a difference in any of the three fields is a separate record.
     const flowRun = existing
       ? await this.prisma.flowRun.update({
           where: { id: existing.id },
           data: {
             requestId,
-            mpl: enriched.mpl,
             name: fullName,
             cfaUrl: enriched.cfaUrl,
             rawPayload: rawPayload as object,
@@ -106,17 +106,19 @@ export class IngestService {
 
   /**
    * N8N tells us (via its own separate check) that a client completed the
-   * CTA. Correlated by (phone, flow) — a phone only appears once within a
-   * single flow, even though mpl+phone can repeat across different flows.
+   * CTA. Correlated by (phone, flow, mpl) — the same triple used to
+   * identify a FlowRun on ingest, since a phone+flow pair alone no longer
+   * pins down a single record (two mpls can share a phone within a flow).
    */
   async handleCtaComplete(dto: CtaCompleteWebhookDto): Promise<void> {
-    const flowRun = await this.prisma.flowRun.findFirst({
-      where: { phone: dto.phone, flowType: dto.flow },
-      orderBy: { createdAt: "desc" },
+    const flowRun = await this.prisma.flowRun.findUnique({
+      where: { phone_flowType_mpl: { phone: dto.phone, flowType: dto.flow, mpl: dto.mpl } },
     });
 
     if (!flowRun) {
-      this.logger.warn(`No FlowRun found for phone=${dto.phone} flow=${dto.flow} — cta-complete webhook ignored`);
+      this.logger.warn(
+        `No FlowRun found for phone=${dto.phone} flow=${dto.flow} mpl=${dto.mpl} — cta-complete webhook ignored`,
+      );
       return;
     }
 

@@ -16,8 +16,8 @@ export class IngestController {
     // kept verbatim on FlowRun.rawPayload so nothing sent by N8N is lost.
     const { flowRun, outcome } = await this.ingestService.handleFlowTrigger(dto, req.body);
     const messages: Record<"duplicate" | "updated", string> = {
-      duplicate: `A record for phone "${flowRun.phone}" already exists on flow "${flowRun.flowType}" — no new SMS/call was triggered. Use a different requestId to force a new attempt, or submit under a different flowType for a separate record.`,
-      updated: `Phone "${flowRun.phone}" already has a record on flow "${flowRun.flowType}" — this submission updated that existing record (same id) instead of creating a new one. Submit under a different flowType if this should be a separate record.`,
+      duplicate: `A record for phone "${flowRun.phone}", flow "${flowRun.flowType}", mpl "${flowRun.mpl}" already exists — no new SMS/call was triggered. Use a different requestId to force a new attempt on this same record.`,
+      updated: `Phone "${flowRun.phone}" already has a record on flow "${flowRun.flowType}" with mpl "${flowRun.mpl}" — this submission updated that existing record (same id) instead of creating a new one. A different mpl or flowType would have created a separate record.`,
     };
     return {
       id: flowRun.id,
