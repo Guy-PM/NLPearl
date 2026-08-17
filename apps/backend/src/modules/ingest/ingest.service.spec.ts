@@ -7,6 +7,9 @@ describe("IngestService", () => {
   const dto: FlowTriggerDto = {
     flowType: "kyc_reminder",
     name: "Ana",
+    first_name: "Ana",
+    last_name: "Test",
+    partner: "test-partner",
     phone: "+15550001",
     mpl: "mpl-1",
     cfaUrl: "https://cfa.example/1",
@@ -66,7 +69,8 @@ describe("IngestService", () => {
       expect.objectContaining({ id: "run-1" }),
       config,
     );
-    expect(result.status).toBe(FlowRunStatus.Scheduled);
+    expect(result.flowRun.status).toBe(FlowRunStatus.Scheduled);
+    expect(result.outcome).toBe("created");
   });
 
   it("leaves the FlowRun at Received without dispatching when the flow has a sendSchedule", async () => {
@@ -75,7 +79,7 @@ describe("IngestService", () => {
     const result = await service.handleFlowTrigger(dto, {});
 
     expect(dispatchService.dispatchOne).not.toHaveBeenCalled();
-    expect(result.status).toBe(FlowRunStatus.Received);
+    expect(result.flowRun.status).toBe(FlowRunStatus.Received);
   });
 
   it("is idempotent: a duplicate requestId short-circuits without side effects", async () => {
@@ -84,13 +88,14 @@ describe("IngestService", () => {
 
     const result = await service.handleFlowTrigger({ ...dto, requestId: "dup" }, {});
 
-    expect(result).toBe(existing);
+    expect(result.flowRun).toBe(existing);
+    expect(result.outcome).toBe("duplicate");
     expect(prisma.flowRun.create).not.toHaveBeenCalled();
     expect(dispatchService.dispatchOne).not.toHaveBeenCalled();
   });
 
-  it("treats a different requestId for the same mpl+flowType as a new attempt on the same row", async () => {
-    const existing = { id: "run-existing", requestId: "old-request", mpl: "mpl-1", flowType: "kyc_reminder" };
+  it("treats a different requestId for the same phone+flowType as a new attempt on the same row", async () => {
+    const existing = { id: "run-existing", requestId: "old-request", phone: "+15550001", flowType: "kyc_reminder" };
     prisma.flowRun.findUnique.mockResolvedValue(existing);
 
     const result = await service.handleFlowTrigger({ ...dto, requestId: "new-request" }, {});
@@ -107,7 +112,8 @@ describe("IngestService", () => {
       }),
     );
     expect(dispatchService.dispatchOne).toHaveBeenCalled();
-    expect(result).toBeDefined();
+    expect(result.flowRun).toBeDefined();
+    expect(result.outcome).toBe("updated");
   });
 
   it("rejects records for a disabled flow before creating a FlowRun", async () => {
@@ -135,7 +141,7 @@ describe("IngestService", () => {
 
     expect(dispatchService.skipIfCtaCompleted).toHaveBeenCalled();
     expect(dispatchService.dispatchOne).not.toHaveBeenCalled();
-    expect(result).toBe(completed);
+    expect(result.flowRun).toBe(completed);
   });
 
   describe("handleCtaComplete", () => {

@@ -31,15 +31,18 @@ export class IngestService {
     return [dto.first_name, dto.last_name].filter(Boolean).join(" ").trim();
   }
 
-  async handleFlowTrigger(dto: FlowTriggerDto, rawPayload: unknown): Promise<FlowRun> {
+  async handleFlowTrigger(
+    dto: FlowTriggerDto,
+    rawPayload: unknown,
+  ): Promise<{ flowRun: FlowRun; outcome: "created" | "duplicate" | "updated" }> {
     const requestId = dto.requestId ?? this.synthesizeRequestId(dto);
 
     const existing = await this.prisma.flowRun.findUnique({
-      where: { mpl_flowType: { mpl: dto.mpl, flowType: dto.flowType } },
+      where: { phone_flowType: { phone: dto.phone, flowType: dto.flowType } },
     });
     if (existing && existing.requestId === requestId) {
       this.logger.log(`Duplicate flow-trigger for requestId=${requestId}, ignoring`);
-      return existing;
+      return { flowRun: existing, outcome: "duplicate" };
     }
 
     const config = await this.flowConfigService.findByFlowType(dto.flowType);
@@ -53,16 +56,17 @@ export class IngestService {
     }
 
     const enriched = await this.enrichment.enrich(dto as FlowTriggerPayload);
+    const outcome = existing ? "updated" : "created";
 
-    // One FlowRun per (mpl, flowType) — a new requestId for an existing
+    // One FlowRun per (phone, flowType) — a new requestId for an existing
     // client+flow is a new attempt on the same record, not a new row.
     const flowRun = existing
       ? await this.prisma.flowRun.update({
           where: { id: existing.id },
           data: {
             requestId,
+            mpl: enriched.mpl,
             name: fullName,
-            phone: enriched.phone,
             cfaUrl: enriched.cfaUrl,
             rawPayload: rawPayload as object,
             status: FlowRunStatus.Received,
@@ -85,19 +89,19 @@ export class IngestService {
         });
 
     const skipped = await this.dispatchService.skipIfCtaCompleted(flowRun);
-    if (skipped) return skipped;
+    if (skipped) return { flowRun: skipped, outcome };
 
     if (config.sendSchedule) {
       // Batched: leave it at Received — the flow's cron dispatch job will
       // send it at the next scheduled time.
-      return flowRun;
+      return { flowRun, outcome };
     }
 
     const dispatched = await this.dispatchService.dispatchOne(flowRun, config);
     if (dispatched.status === FlowRunStatus.Failed) {
       throw new Error(dispatched.errorMessage ?? "Preliminary SMS failed");
     }
-    return dispatched;
+    return { flowRun: dispatched, outcome };
   }
 
   /**

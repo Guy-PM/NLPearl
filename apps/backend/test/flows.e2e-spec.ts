@@ -98,6 +98,9 @@ describe("Flow pipeline (e2e, stubbed)", () => {
   const payload = {
     flowType: "kyc_reminder",
     name: "Ana",
+    first_name: "Ana",
+    last_name: "Test",
+    partner: "test-partner",
     phone: "+15550001",
     mpl: "mpl-1",
     cfaUrl: "https://cfa.example/1",
@@ -205,12 +208,13 @@ describe("Flow pipeline (e2e, stubbed)", () => {
   });
 
   it("is idempotent on a repeated N8N delivery with the same requestId", async () => {
-    const dupPayload = { ...payload, mpl: "mpl-2", requestId: "fixed-request-id" };
+    const dupPayload = { ...payload, phone: "+15550099", mpl: "mpl-2", requestId: "fixed-request-id" };
     const first = await request(app.getHttpServer())
       .post("/api/webhooks/n8n/flow-trigger")
       .set("x-api-key", "n8n-secret")
       .send(dupPayload)
       .expect(201);
+    expect(first.body.duplicate).toBe(false);
 
     const callCountBefore = notificationService.sendSms.mock.calls.length;
 
@@ -221,7 +225,66 @@ describe("Flow pipeline (e2e, stubbed)", () => {
       .expect(201);
 
     expect(second.body.id).toBe(first.body.id);
+    expect(second.body.duplicate).toBe(true);
+    expect(second.body.message).toMatch(/already exists/);
     expect(notificationService.sendSms.mock.calls.length).toBe(callCountBefore);
+  });
+
+  it("flags a resubmission for the same phone+flowType as reusing the existing record, but allows a different flowType", async () => {
+    const first = await request(app.getHttpServer())
+      .post("/api/webhooks/n8n/flow-trigger")
+      .set("x-api-key", "n8n-secret")
+      .send({ ...payload, phone: "+15550060", mpl: "mpl-60a" })
+      .expect(201);
+
+    const second = await request(app.getHttpServer())
+      .post("/api/webhooks/n8n/flow-trigger")
+      .set("x-api-key", "n8n-secret")
+      .send({ ...payload, phone: "+15550060", mpl: "mpl-60b", requestId: "explicit-different-request-id" })
+      .expect(201);
+
+    expect(second.body.id).toBe(first.body.id);
+    expect(second.body.duplicate).toBe(false);
+    expect(second.body.message).toMatch(/already has a record/);
+
+    await request(app.getHttpServer())
+      .post("/api/flow-configs")
+      .send({
+        flowType: "weddings_flow",
+        nlpearlOutboundId: "outbound-weddings",
+        preliminarySmsTemplate: "Hi {{name}}, weddings flow.",
+        consentSmsTemplate: "Link: {{cfaUrl}}",
+        delayMinutes: 5,
+      })
+      .expect(201);
+
+    const differentFlow = await request(app.getHttpServer())
+      .post("/api/webhooks/n8n/flow-trigger")
+      .set("x-api-key", "n8n-secret")
+      .send({ ...payload, flowType: "weddings_flow", phone: "+15550060", mpl: "mpl-60c" })
+      .expect(201);
+
+    expect(differentFlow.body.id).not.toBe(first.body.id);
+    expect(differentFlow.body.duplicate).toBe(false);
+    expect(differentFlow.body.message).toBeUndefined();
+  });
+
+  it("rejects a flow-trigger missing required fields with a specific validation error", async () => {
+    const res = await request(app.getHttpServer())
+      .post("/api/webhooks/n8n/flow-trigger")
+      .set("x-api-key", "n8n-secret")
+      .send({ flowType: "kyc_reminder", phone: "+15550070" })
+      .expect(400);
+
+    expect(res.body.error).toBe("Bad Request");
+    expect(res.body.message).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("mpl"),
+        expect.stringContaining("partner"),
+        expect.stringContaining("first_name"),
+        expect.stringContaining("last_name"),
+      ]),
+    );
   });
 
   it("holds a batched flow's records at Received until its cron job fires", async () => {
@@ -251,7 +314,15 @@ describe("Flow pipeline (e2e, stubbed)", () => {
     const ingestRes = await request(app.getHttpServer())
       .post("/api/webhooks/n8n/flow-trigger")
       .set("x-api-key", "n8n-secret")
-      .send({ flowType: "batched_flow", name: "Cara", phone: "+15550003", mpl: "mpl-3" })
+      .send({
+        flowType: "batched_flow",
+        name: "Cara",
+        first_name: "Cara",
+        last_name: "Test",
+        partner: "test-partner",
+        phone: "+15550003",
+        mpl: "mpl-3",
+      })
       .expect(201);
 
     expect(ingestRes.body.status).toBe("Received");
@@ -287,7 +358,15 @@ describe("Flow pipeline (e2e, stubbed)", () => {
     const ingestRes = await request(app.getHttpServer())
       .post("/api/webhooks/n8n/flow-trigger")
       .set("x-api-key", "n8n-secret")
-      .send({ flowType: "retry_flow", name: "Dov", phone: "+15550004", mpl: "mpl-4" })
+      .send({
+        flowType: "retry_flow",
+        name: "Dov",
+        first_name: "Dov",
+        last_name: "Test",
+        partner: "test-partner",
+        phone: "+15550004",
+        mpl: "mpl-4",
+      })
       .expect(201);
     const retryFlowRunId = ingestRes.body.id;
 
@@ -331,7 +410,15 @@ describe("Flow pipeline (e2e, stubbed)", () => {
     const ingestRes = await request(app.getHttpServer())
       .post("/api/webhooks/n8n/flow-trigger")
       .set("x-api-key", "n8n-secret")
-      .send({ flowType: "kyc_reminder", name: "Eli", phone: "+15550005", mpl: "mpl-5" })
+      .send({
+        flowType: "kyc_reminder",
+        name: "Eli",
+        first_name: "Eli",
+        last_name: "Test",
+        partner: "test-partner",
+        phone: "+15550005",
+        mpl: "mpl-5",
+      })
       .expect(201);
 
     const sendCountBefore = notificationService.sendSms.mock.calls.length;
@@ -349,7 +436,15 @@ describe("Flow pipeline (e2e, stubbed)", () => {
     const ingestRes = await request(app.getHttpServer())
       .post("/api/webhooks/n8n/flow-trigger")
       .set("x-api-key", "n8n-secret")
-      .send({ flowType: "kyc_reminder", name: "Fay", phone: "+15550006", mpl: "mpl-6" })
+      .send({
+        flowType: "kyc_reminder",
+        name: "Fay",
+        first_name: "Fay",
+        last_name: "Test",
+        partner: "test-partner",
+        phone: "+15550006",
+        mpl: "mpl-6",
+      })
       .expect(201);
 
     await request(app.getHttpServer())
@@ -376,7 +471,15 @@ describe("Flow pipeline (e2e, stubbed)", () => {
     const ingestRes = await request(app.getHttpServer())
       .post("/api/webhooks/n8n/flow-trigger")
       .set("x-api-key", "n8n-secret")
-      .send({ flowType: "kyc_reminder", name: "Gil", phone: "+15550007", mpl: "mpl-7" })
+      .send({
+        flowType: "kyc_reminder",
+        name: "Gil",
+        first_name: "Gil",
+        last_name: "Test",
+        partner: "test-partner",
+        phone: "+15550007",
+        mpl: "mpl-7",
+      })
       .expect(201);
 
     await request(app.getHttpServer())
@@ -396,11 +499,19 @@ describe("Flow pipeline (e2e, stubbed)", () => {
     expect(detail.body.status).toBe("Completed");
   });
 
-  it("skips the SMS too when a new attempt reuses an (mpl, flowType) whose CTA is already completed", async () => {
+  it("skips the SMS too when a new attempt reuses a (phone, flowType) whose CTA is already completed", async () => {
     const ingestRes = await request(app.getHttpServer())
       .post("/api/webhooks/n8n/flow-trigger")
       .set("x-api-key", "n8n-secret")
-      .send({ flowType: "kyc_reminder", name: "Hana", phone: "+15550008", mpl: "mpl-8" })
+      .send({
+        flowType: "kyc_reminder",
+        name: "Hana",
+        first_name: "Hana",
+        last_name: "Test",
+        partner: "test-partner",
+        phone: "+15550008",
+        mpl: "mpl-8",
+      })
       .expect(201);
 
     await request(app.getHttpServer())
@@ -414,7 +525,16 @@ describe("Flow pipeline (e2e, stubbed)", () => {
     const secondAttempt = await request(app.getHttpServer())
       .post("/api/webhooks/n8n/flow-trigger")
       .set("x-api-key", "n8n-secret")
-      .send({ flowType: "kyc_reminder", name: "Hana", phone: "+15550008", mpl: "mpl-8", requestId: "attempt-2-hana" })
+      .send({
+        flowType: "kyc_reminder",
+        name: "Hana",
+        first_name: "Hana",
+        last_name: "Test",
+        partner: "test-partner",
+        phone: "+15550008",
+        mpl: "mpl-8",
+        requestId: "attempt-2-hana",
+      })
       .expect(201);
 
     expect(secondAttempt.body.id).toBe(ingestRes.body.id);
@@ -426,7 +546,15 @@ describe("Flow pipeline (e2e, stubbed)", () => {
     const ingestRes = await request(app.getHttpServer())
       .post("/api/webhooks/n8n/flow-trigger")
       .set("x-api-key", "n8n-secret")
-      .send({ flowType: "batched_flow", name: "Ivy", phone: "+15550009", mpl: "mpl-9" })
+      .send({
+        flowType: "batched_flow",
+        name: "Ivy",
+        first_name: "Ivy",
+        last_name: "Test",
+        partner: "test-partner",
+        phone: "+15550009",
+        mpl: "mpl-9",
+      })
       .expect(201);
     expect(ingestRes.body.status).toBe("Received");
 
@@ -451,7 +579,15 @@ describe("Flow pipeline (e2e, stubbed)", () => {
     const ingestRes = await request(app.getHttpServer())
       .post("/api/webhooks/n8n/flow-trigger")
       .set("x-api-key", "n8n-secret")
-      .send({ flowType: "kyc_reminder", name: "Jon", phone: "+15550010", mpl: "mpl-10" })
+      .send({
+        flowType: "kyc_reminder",
+        name: "Jon",
+        first_name: "Jon",
+        last_name: "Test",
+        partner: "test-partner",
+        phone: "+15550010",
+        mpl: "mpl-10",
+      })
       .expect(201);
 
     const deleteRes = await request(app.getHttpServer())

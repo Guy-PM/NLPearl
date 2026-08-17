@@ -1,4 +1,4 @@
-import { IsOptional, IsString } from "class-validator";
+import { IsNotEmpty, IsOptional, IsString } from "class-validator";
 
 export class FlowTriggerDto {
   @IsOptional()
@@ -6,28 +6,34 @@ export class FlowTriggerDto {
   requestId?: string;
 
   @IsString()
+  @IsNotEmpty()
   flowType!: string;
 
-  // Some flows send a single `name`, others send `first_name`/`last_name`
-  // separately (as N8N's real payloads do) — at least one shape must
-  // resolve to a non-empty full name; see IngestService.resolveFullName.
+  // An explicit `name` is accepted as an override, but `first_name`/
+  // `last_name` are the required shape — see IngestService.resolveFullName.
   @IsOptional()
   @IsString()
   name?: string;
 
-  @IsOptional()
   @IsString()
-  first_name?: string;
-
-  @IsOptional()
-  @IsString()
-  last_name?: string;
+  @IsNotEmpty()
+  first_name!: string;
 
   @IsString()
+  @IsNotEmpty()
+  last_name!: string;
+
+  @IsString()
+  @IsNotEmpty()
   phone!: string;
 
   @IsString()
+  @IsNotEmpty()
   mpl!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  partner!: string;
 
   @IsOptional()
   @IsString()

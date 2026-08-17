@@ -25,12 +25,12 @@ export class WebhooksService {
 
   async handleConsent(dto: NlpearlConsentWebhookDto): Promise<void> {
     const flowRun = await this.prisma.flowRun.findUnique({
-      where: { mpl_flowType: { mpl: dto.mpl, flowType: dto.flowType } },
+      where: { phone_flowType: { phone: dto.phone, flowType: dto.flowType } },
     });
 
     if (!flowRun || flowRun.status !== FlowRunStatus.CallTriggered) {
       this.logger.warn(
-        `No CallTriggered FlowRun found for mpl=${dto.mpl} flowType=${dto.flowType} — consent webhook ignored`,
+        `No CallTriggered FlowRun found for phone=${dto.phone} flowType=${dto.flowType} — consent webhook ignored`,
       );
       return;
     }
