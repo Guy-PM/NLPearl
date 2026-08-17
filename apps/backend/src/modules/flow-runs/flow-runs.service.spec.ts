@@ -21,12 +21,13 @@ describe("FlowRunsService", () => {
   });
 
   describe("remove", () => {
-    it("deletes the FlowRun (events/calls cascade via the DB relation)", async () => {
+    it("deletes the FlowRun (events/calls cascade via the DB relation) and returns confirmation", async () => {
       prisma.flowRun.findUnique.mockResolvedValue({ id: "run-1" });
 
-      await service.remove("run-1");
+      const result = await service.remove("run-1");
 
       expect(prisma.flowRun.delete).toHaveBeenCalledWith({ where: { id: "run-1" } });
+      expect(result).toEqual({ id: "run-1", deleted: true });
     });
 
     it("throws NotFoundException when the record doesn't exist", async () => {

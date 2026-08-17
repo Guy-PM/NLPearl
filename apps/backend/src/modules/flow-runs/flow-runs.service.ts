@@ -80,5 +80,6 @@ export class FlowRunsService {
       throw new NotFoundException(`FlowRun "${id}" not found`);
     }
     await this.prisma.flowRun.delete({ where: { id } });
+    return { id, deleted: true };
   }
 }

@@ -454,7 +454,10 @@ describe("Flow pipeline (e2e, stubbed)", () => {
       .send({ flowType: "kyc_reminder", name: "Jon", phone: "+15550010", mpl: "mpl-10" })
       .expect(201);
 
-    await request(app.getHttpServer()).delete(`/api/flow-runs/${ingestRes.body.id}`).expect(200);
+    const deleteRes = await request(app.getHttpServer())
+      .delete(`/api/flow-runs/${ingestRes.body.id}`)
+      .expect(200);
+    expect(deleteRes.body).toEqual({ id: ingestRes.body.id, deleted: true });
 
     await request(app.getHttpServer()).get(`/api/flow-runs/${ingestRes.body.id}`).expect(404);
   });
